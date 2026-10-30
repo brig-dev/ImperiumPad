@@ -1,0 +1,24 @@
+# Compila ImperiumPad (Release, Win32) a ogni push su main e prepara lo zip da scaricare tra gli "artifact" del run.
+# Sui computer di GitHub c'e' Visual Studio 2022: si usa il suo toolset (v143) al posto di quello del PC (v145).
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Compila
+        run: msbuild ImperiumPad\ImperiumPad.vcxproj /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /p:OutDir=..\Release\ /m /v:minimal
+      - name: Pacchetto
+        shell: pwsh
+        run: ./tools/pacchetto.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ImperiumPad
+          path: ImperiumPad-*.zip
