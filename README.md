@@ -6,12 +6,12 @@ ImperiumPad is a small DLL (`wininet.dll`, 32 bit) that sits next to the game an
 
 ## What it does
 
-- Left stick moves the cursor (with acceleration and a "magnet" that slows it over units, buildings and buttons); A = left click, X = right click (the game's default action), B = cancel, LT = Shift.
+- Left stick moves the cursor (with acceleration and a "magnet" that slows it over units, buildings and buttons); A = left click, X = right click (the game's default action), B = cancel, LT = Shift (add to the selection, queue commands).
 - Right stick scrolls the map, faster the more you tilt it, in any direction.
 - Pad symbols on the command bar buttons (Steam, Xbox or PlayStation style): hold RT and press that button to run the command; RT + LT reaches buttons 13 to 24. Imperivm Resurrected's keyboard letters are hidden while the pad is in use.
 - Hold RB: command wheel (icons and names of the bar commands; for a hero, formations and abilities). Hold LB: groups wheel 1-0 with unit counts (hold LT too to assign the selection). Time slows down while a wheel is open (single player only).
 - D-pad and right stick jump between buttons, check boxes, lists and sliders in every menu. Y in menus opens the Steam on-screen keyboard (Big Picture, Steam Deck, Steam Machine).
-- Hero selection, army, last alert, health bars, large map, centring: on the d-pad, bumpers and stick clicks.
+- Next/previous hero, hero's army, last alert, health bars, minimap, center on selection: on the d-pad, bumpers and stick clicks.
 - Vibration on new alerts and when the selected hero drops below a quarter of its health.
 - If the Windows cursor cannot be moved (gamescope), a drawn cursor takes over automatically.
 - On-screen texts in English, Italian and Spanish (the game's language by default).
@@ -47,12 +47,12 @@ ImperiumPad è una piccola DLL (`wininet.dll`, 32 bit) che sta accanto al gioco 
 
 ## Cosa fa
 
-- Leva sinistra: cursore (con accelerazione e "calamita" che lo rallenta su unità, edifici e pulsanti); A = clic sinistro, X = clic destro (azione predefinita del gioco), B = annulla, LT = Maiusc.
+- Leva sinistra: cursore (con accelerazione e "calamita" che lo rallenta su unità, edifici e pulsanti); A = clic sinistro, X = clic destro (azione predefinita del gioco), B = annulla, LT = Maiusc (aggiunge alla selezione, mette in coda i comandi).
 - Leva destra: scorre la mappa, più veloce quanto più la inclini, in ogni direzione.
 - Simboli del pad sui pulsanti della barra comandi (stile Steam, Xbox o PlayStation): RT tenuto + quel tasto esegue il comando; RT + LT arriva ai pulsanti dal 13 al 24. Le lettere della tastiera di Imperivm Resurrected spariscono mentre usi il pad.
 - RB tenuto: radiale dei comandi (icone e nomi dei comandi della barra; per un eroe formazioni e abilità). LB tenuto: radiale dei gruppi 1-0 con il numero di unità (con LT tenuto assegni la selezione). Mentre un radiale è aperto il tempo rallenta (solo in partita singola).
 - Croce e leva destra saltano tra pulsanti, caselle, elenchi e cursori in tutti i menu. Y nei menu apre la tastiera di Steam (Big Picture, Steam Deck, Steam Machine).
-- Eroi, esercito, ultimo avviso, barre della salute, mappa grande, centra: su croce, dorsali e pressione delle leve.
+- Eroe successivo e precedente, esercito dell'eroe, ultimo avviso, barre della salute, mappa strategica, centra sulla selezione: su croce, dorsali e pressione delle leve.
 - Vibrazione agli avvisi nuovi e quando l'eroe selezionato scende sotto un quarto della salute.
 - Se il cursore di Windows non si può spostare (gamescope), passa da solo a un cursore disegnato.
 - Testi a schermo in italiano, inglese e spagnolo (di base la lingua del gioco).

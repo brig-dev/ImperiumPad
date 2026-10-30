@@ -14,8 +14,8 @@
 #include <string>
 #include <vector>
 
-#define IMPERIUMPAD_VERSION "0.8.1 (cursore piu' veloce di base: velocita' 1,3 e accelerazione in 0,3 s)"
-#define IMPERIUMPAD_VERSION_NUM L"0.8.1"
+#define IMPERIUMPAD_VERSION "0.8.2 (testi allineati alla terminologia del gioco in italiano, inglese e spagnolo)"
+#define IMPERIUMPAD_VERSION_NUM L"0.8.2"
 
 // --- ImperiumPad.cpp: log e informazioni generali -----------------------------
 void        Log(const char* fmt, ...);
