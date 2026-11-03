@@ -170,12 +170,14 @@ Panel BuildGlyph(GlyphStyle style, int slot, int size)
     static const COLORREF kPs[4] = { RGB(142, 162, 236), RGB(236, 92, 102), RGB(226, 132, 202), RGB(72, 202, 172) };
     static const wchar_t* kFace[4] = { L"A", L"B", L"X", L"Y" };
 
+    // posti 0..11 come kSlotMask; 12 e 13 (0.8.3) = RT e LT, il segno accanto alla barra
     Shape shape = Shape::Circle;
-    if (slot == 4 || slot == 5) shape = Shape::Shoulder;
+    if (slot == 4 || slot == 5 || slot >= 12) shape = Shape::Shoulder;
     else if (slot >= 6 && slot <= 9) shape = Shape::Dpad;
     COLORREF ringColor = kRing, inkColor = kInk;
     if (slot < 4 && style == GlyphStyle::Xbox) ringColor = inkColor = kXbox[slot];
     if (slot < 4 && style == GlyphStyle::PlayStation) inkColor = kPs[slot];
+    if (slot >= 12) ringColor = kGold;   // il segno di RT accanto alla barra si deve notare
 
     DrawShape(m, shape, false, 0);
     const std::vector<uint8_t> fill = MaskTake(m, size);
@@ -191,6 +193,10 @@ Panel BuildGlyph(GlyphStyle style, int slot, int size)
     }
     else if (slot <= 9) {
         DrawDpadArm(m, slot - 6);
+    }
+    else if (slot >= 12) {
+        const wchar_t* t = style == GlyphStyle::Xbox ? (slot == 12 ? L"RT" : L"LT") : (slot == 12 ? L"R2" : L"L2");
+        DrawLabel(m, t, S * 46 / 100);
     }
     else {
         const wchar_t* t = style == GlyphStyle::Xbox ? (slot == 10 ? L"LS" : L"RS") : (slot == 10 ? L"L3" : L"R3");

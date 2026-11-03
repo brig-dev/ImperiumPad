@@ -210,7 +210,11 @@ Panel BuildRadial(int kind, const std::vector<RadialItem>& items, int hi, bool a
             else head = items[hi].title.empty() ? Tr(T_RadUnnamed) : items[hi].title;
         }
         else {
-            if (hi < 0) head = Tr(assign ? T_RadAssignChoose : T_RadTiltGroup);
+            // 0.8.4: con tutti i gruppi vuoti si dice che non ce ne sono (la riga sotto spiega come crearli)
+            bool anyGroup = false;
+            for (const RadialItem& it : items) if (it.count) { anyGroup = true; break; }
+            if (hi < 0 && !assign && !anyGroup) head = Tr(T_RadNoGroups);
+            else if (hi < 0) head = Tr(assign ? T_RadAssignChoose : T_RadTiltGroup);
             else {
                 const int g = items[hi].id;
                 if (assign) head = TrF(T_RadAssignTo, g);

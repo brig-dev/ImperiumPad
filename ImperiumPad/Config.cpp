@@ -113,6 +113,9 @@ void LoadConfig()
     else if (_stricmp(glyphs, "PlayStation") == 0 || _stricmp(glyphs, "PS") == 0 || _stricmp(glyphs, "DualSense") == 0)
         c.glyphs = GlyphStyle::PlayStation;
     c.hideKeyLetters  = ReadBool("Pad", "HideKeyLetters", c.hideKeyLetters);
+    char barSymbols[16];
+    GetPrivateProfileStringA("Pad", "BarSymbols", "Hold", barSymbols, sizeof(barSymbols), g_ini);
+    c.barSymbolsAlways = _stricmp(barSymbols, "Always") == 0;
     c.controllerIndex = ReadInt("Pad", "ControllerIndex", c.controllerIndex);
     c.tickMs          = ReadInt("Pad", "TickMs", c.tickMs);
     c.leftDeadzone    = ReadFloat("Pad", "LeftDeadzone", c.leftDeadzone);
@@ -168,9 +171,10 @@ void LoadConfig()
     if (c.diagIntervalMs < 100) c.diagIntervalMs = 100;
     g_cfg = c;
 
-    Log("Impostazioni (%s): [General] Language=%s [Pad] Source=%s Glyphs=%s HideKeyLetters=%d ControllerIndex=%d TickMs=%d LeftDeadzone=%.2f RightDeadzone=%.2f TapMs=%d "
+    Log("Impostazioni (%s): [General] Language=%s [Pad] Source=%s Glyphs=%s HideKeyLetters=%d BarSymbols=%s ControllerIndex=%d TickMs=%d LeftDeadzone=%.2f RightDeadzone=%.2f TapMs=%d "
         "KeyLog=%d AcceptInjected=%d; [Cursor] Speed=%.2f Curve=%.2f RampMs=%d Nudge=%.3f Mode=%d Magnet=%.2f; Vibration=%.2f SlowMotion=%.2f; [Camera] Threshold=%.2f Analog=%d Speed=%.2f Curve=%.2f; [Input] VirtualModifiers=%d; "
-        "[Diag] IntervalMs=%d Memory=%d", g_ini, c.language.c_str(), SourceName(c.padSource), GlyphStyleName(c.glyphs), c.hideKeyLetters ? 1 : 0, c.controllerIndex, c.tickMs, c.leftDeadzone,
+        "[Diag] IntervalMs=%d Memory=%d", g_ini, c.language.c_str(), SourceName(c.padSource), GlyphStyleName(c.glyphs), c.hideKeyLetters ? 1 : 0,
+        c.barSymbolsAlways ? "Always" : "Hold", c.controllerIndex, c.tickMs, c.leftDeadzone,
         c.rightDeadzone, c.tapMs, c.keyLog ? 1 : 0, c.acceptInjected ? 1 : 0, c.cursorSpeed, c.cursorCurve, c.cursorRampMs, c.cursorNudge, static_cast<int>(c.cursorMode), c.magnet, c.vibration, c.slowMotion, c.cameraOn, c.cameraAnalog ? 1 : 0, c.cameraSpeed, c.cameraCurve,
         c.hookKeyState ? 1 : 0, c.diagIntervalMs, c.memory ? 1 : 0);
 }

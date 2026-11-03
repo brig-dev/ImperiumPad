@@ -22,6 +22,8 @@
 // Oltre al riquadro e all'aiuto si disegnano i simboli del pad (stile Steam, Xbox o PlayStation) nell'angolo in basso a
 // destra dei pulsanti della barra (Resurrected scrive le sue lettere in alto a sinistra).
 // 0.6.0: radiali dei comandi della barra (RB tenuto) e dei gruppi (LB tenuto), costruiti qui nel thread del gioco.
+// 0.8.3: senza selezione i posti, i simboli e il radiale dei comandi valgono per i pulsanti del menu senza selezione
+// (guida, salvataggi, mappa strategica...); simboli sui pulsanti solo con RT tenuto e segno di RT accanto alla barra.
 
 #include "ImperiumPad.h"
 #include "OverlayDraw.h"
@@ -63,6 +65,8 @@ int              g_padPage = 0;        // RT + LT: simboli sui pulsanti dal tred
 bool             g_cursorOn = false;   // cursore disegnato (0.8.0): posizione e dimensioni dell'area client
 int              g_cursorX = 0, g_cursorY = 0, g_clientW = 0, g_clientH = 0;
 std::vector<RECT> g_barPad;            // copia dei pulsanti della barra per il thread del pad (calamita)
+bool             g_barPadEmpty = false; // 0.8.3: quei pulsanti sono del menu senza selezione
+bool             g_cmdEmpty = false;   // cosa c'era a schermo quando e' stato chiesto il comando (barra o menu)
 std::atomic<int> g_bufW{ 0 }, g_bufH{ 0 };       // dimensioni del buffer del gioco all'ultima copia
 std::atomic<int> g_drawnCursor{ -1 };            // posizione del cursore disegnato all'ultima copia (x << 16 | y)
 GlyphStyle       g_padStyle = GlyphStyle::Steam;
@@ -75,6 +79,8 @@ int              g_radHi = -1;         // voce scelta
 bool             g_radAssign = false;  // gruppi: LT tenuto, si assegna invece di selezionare
 std::wstring     g_radHint;            // riga di aiuto sotto il titolo (nomi dei tasti dello stile scelto)
 int              g_radCount = 0;       // voci del radiale aperto lette dal thread del gioco
+int              g_groupCounts[10] = {};   // 0.8.4: elementi dei gruppi 0..9 letti col radiale dei gruppi aperto
+bool             g_groupCountsOk = false;
 // caselle dei menu lette nel thread del gioco, per il thread del pad
 std::vector<UiControl> g_ui;
 int              g_uiW = 0, g_uiH = 0;
@@ -96,6 +102,9 @@ Panel    g_cursorPanel;               // freccia del cursore disegnato
 GlyphStyle g_glyphStyle = GlyphStyle::Steam;
 int      g_glyphSize = 0;             // 0 = da costruire
 unsigned g_glyphBuilds = 0;
+Panel    g_rtHint;                    // segno di RT accanto alla barra (0.8.3)
+GlyphStyle g_rtHintStyle = GlyphStyle::Steam;
+int      g_rtHintSize = 0;
 
 struct Rect { int x = 0, y = 0, w = 0, h = 0; bool Empty() const { return w <= 0 || h <= 0; } };
 
@@ -360,11 +369,28 @@ bool SameItem(const Item& a, const Item& b) { return a.panel == b.panel && a.mul
 // --- Menu e barra comandi letti nel thread del gioco (0.5.0) -------------------------------------------------------
 std::vector<RECT> g_barRects;          // pulsanti visibili della barra all'ultima lettura
 std::vector<int>  g_barIds;            // indici dei loro comandi
+bool g_barEmpty = false;               // 0.8.3: sono i pulsanti del menu senza selezione (id 0x1001..0x1009)
 DWORD g_uiNext = 0;
+
+// Pulsanti del menu senza selezione (0.8.3): titolo come nei suggerimenti del gioco, nome per il log.
+struct EmptyButton { int id; Txt title; const char* name; };
+const EmptyButton kEmptyButtons[9] = {
+    { 0x1008, T_EmptyHelp, "guida" }, { 0x1005, T_EmptyDiplomacy, "diplomazia" },
+    { 0x1003, T_EmptyQuickSave, "salvataggio rapido" }, { 0x1009, T_EmptyParty, "seleziona gruppo" },
+    { 0x1002, T_EmptyNotes, "obiettivi" }, { 0x1004, T_EmptyQuickLoad, "caricamento rapido" },
+    { 0x1001, T_EmptyMainMenu, "menu principale" }, { 0x1006, T_EmptyChat, "conversazione" },
+    { 0x1007, T_EmptyMinimap, "mappa strategica" },
+};
+
+const EmptyButton* EmptyButtonOf(int id)
+{
+    for (const EmptyButton& b : kEmptyButtons) if (b.id == id) return &b;
+    return nullptr;
+}
 
 void ReadGame(const Surface& s, DWORD now, bool active, bool inMap)
 {
-    if (!active || !inMap) { g_barRects.clear(); g_barIds.clear(); }   // pad spento o fuori mappa: i simboli spariscono subito
+    if (!active || !inMap) { g_barRects.clear(); g_barIds.clear(); g_barEmpty = false; }   // pad spento o fuori mappa: i simboli spariscono subito
     if (static_cast<int>(now - g_uiNext) < 0) {
         // 0.5.1: nei menu il gioco copia solo quando qualcosa cambia; se questa copia non si legge, l'elenco delle caselle
         // resterebbe quello di prima finche' il gioco non copia di nuovo. OverlayTick chiede allora un'altra copia.
@@ -403,21 +429,28 @@ void ReadGame(const Surface& s, DWORD now, bool active, bool inMap)
     const std::vector<RECT> fake = g_testBar;
     LeaveCriticalSection(&g_lock);
 
-    // pulsanti della barra (in mappa con il pad attivo)
+    // pulsanti della barra (in mappa con il pad attivo); senza selezione la barra e' nascosta e al suo posto c'e' il menu
+    // senza selezione, che prende gli stessi posti (0.8.3)
     g_barRects.clear();
     g_barIds.clear();
+    g_barEmpty = false;
     if (active && inMap) {
         if (testBar) { g_barRects = fake; g_barIds.assign(fake.size(), 0); }
         else {
             RECT rects[64];
             int ids[64];
-            const int nb = GameBarButtons(rects, ids, 64);
+            int nb = GameBarButtons(rects, ids, 64);
+            if (!nb) {
+                nb = GameEmptyMenuButtons(rects, ids, 64);
+                g_barEmpty = nb > 0;
+            }
             g_barRects.assign(rects, rects + nb);
             g_barIds.assign(ids, ids + nb);
         }
     }
     EnterCriticalSection(&g_lock);
     g_barPad = g_barRects;
+    g_barPadEmpty = g_barEmpty;
     LeaveCriticalSection(&g_lock);
 
     // voci del radiale aperto (0.6.0): comandi della barra con icona e titolo, oppure gruppi con il numero di unita'
@@ -432,15 +465,17 @@ void ReadGame(const Surface& s, DWORD now, bool active, bool inMap)
             RadialItem it;
             it.id = g_barIds[i];
             char t[160];
-            if (!testBar && GameCommandTitle(it.id, t, sizeof(t))) it.title = Widen(t);
+            if (g_barEmpty) { if (const EmptyButton* b = EmptyButtonOf(it.id)) it.title = Tr(b->title); }
+            else if (!testBar && GameCommandTitle(it.id, t, sizeof(t))) it.title = Widen(t);
             if (testBar) { wchar_t b[32]; swprintf_s(b, L"Comando di prova %d", static_cast<int>(i + 1)); it.title = b; }
             TakeIcon(s, g_barRects[i], it);
             items.push_back(it);
         }
     }
-    else if (kind == 2) {
-        int counts[10];
-        GameGroupCounts(counts);
+    int counts[10] = {};
+    bool countsOk = false;
+    if (kind == 2) {
+        countsOk = GameGroupCounts(counts);
         for (int i = 0; i < 10; ++i) {
             RadialItem it;
             it.id = (i + 1) % 10;
@@ -451,33 +486,70 @@ void ReadGame(const Surface& s, DWORD now, bool active, bool inMap)
     g_radItems = items;
     EnterCriticalSection(&g_lock);
     g_radCount = static_cast<int>(items.size());
+    if (kind == 2) { memcpy(g_groupCounts, counts, sizeof(counts)); g_groupCountsOk = countsOk; }
+    else g_groupCountsOk = false;
     LeaveCriticalSection(&g_lock);
     const int nb = static_cast<int>(g_barRects.size());
-    if (nb != lastBar && (active && inMap)) {
-        if (nb) Log("Barra comandi: %d pulsanti visibili, primo %ld,%ld-%ld,%ld%s", nb, g_barRects[0].left, g_barRects[0].top,
-                    g_barRects[0].right, g_barRects[0].bottom, nb > kSlotCount ? " (oltre il dodicesimo senza simbolo)" : "");
+    const int barKey = nb + (g_barEmpty ? 1000 : 0);
+    if (barKey != lastBar && (active && inMap)) {
+        if (nb) Log("%s: %d pulsanti visibili, primo %ld,%ld-%ld,%ld%s", g_barEmpty ? "Menu senza selezione" : "Barra comandi", nb,
+                    g_barRects[0].left, g_barRects[0].top, g_barRects[0].right, g_barRects[0].bottom,
+                    nb > kSlotCount ? " (oltre il dodicesimo senza simbolo)" : "");
         else Log("Barra comandi: nessun pulsante visibile");
     }
-    lastBar = active && inMap ? nb : -1;
+    lastBar = active && inMap ? barKey : -1;
+}
+
+// Menu senza selezione (0.8.3): il pulsante del posto si preme con un clic mandato nel suo punto (stessa strada del
+// mouse, quindi anche dei controlli del gioco e di Resurrected), senza spostare il cursore.
+void EmptyMenuClick(int slot, const RECT* rects, const int* ids, int n, int bufW, int bufH)
+{
+    if (slot >= n) { Log("Menu senza selezione: il posto %d non c'e' (%d pulsanti)", slot + 1, n); return; }
+    HWND hwnd = g_gameHwnd.load();
+    RECT c{};
+    if (!hwnd || !GetClientRect(hwnd, &c) || c.right <= 0 || c.bottom <= 0 || bufW <= 0 || bufH <= 0) {
+        Log("Menu senza selezione: posto %d non premuto (finestra del gioco non pronta)", slot + 1);
+        return;
+    }
+    const RECT& b = rects[slot];
+    const int x = static_cast<int>((static_cast<long long>(b.left + b.right) * c.right) / (2LL * bufW));
+    const int y = static_cast<int>((static_cast<long long>(b.top + b.bottom) * c.bottom) / (2LL * bufH));
+    InputClickAt(x, y);
+    const EmptyButton* eb = EmptyButtonOf(ids[slot]);
+    Log("Menu senza selezione: posto %d \"%s\" (id 0x%x, pulsante %ld,%ld): clic mandato nel punto %d,%d della finestra",
+        slot + 1, eb ? eb->name : "?", ids[slot], b.left, b.top, x, y);
 }
 
 // Comando chiesto con RT + tasto: si rilegge la barra e si clicca il pulsante in quel posto.
-void RunCommand(DWORD now)
+void RunCommand(int bufW, int bufH)
 {
     int slot;
     DWORD at;
+    bool sawEmpty;
     EnterCriticalSection(&g_lock);
     slot = g_cmdSlot;
     at = g_cmdAt;
+    sawEmpty = g_cmdEmpty;
     g_cmdSlot = -1;
     LeaveCriticalSection(&g_lock);
     if (slot < 0) return;
-    if (now - at > 1000) { Log("Comando del posto %d scaduto (nessuna copia del gioco per 1 s)", slot + 1); return; }
+    // 0.8.4: con un'ora presa adesso e la differenza con segno. Prima si usava l'ora d'inizio della copia: se il comando
+    // arrivava durante la copia (lunga mentre si ricostruisce il radiale) la differenza era negativa e, senza segno,
+    // enorme, quindi i comandi scelti col radiale risultavano "scaduti" (prova sulla Steam Machine del 31/10/2026)
+    if (static_cast<int>(GetTickCount() - at) > 1000) { Log("Comando del posto %d scaduto (nessuna copia del gioco per 1 s)", slot + 1); return; }
     GameState gs;
     if (!GameRead(gs) || !gs.InMap()) { Log("Comando del posto %d non eseguito: non si e' in mappa", slot + 1); return; }
     RECT rects[64];
     int ids[64];
     const int n = GameBarButtons(rects, ids, 64);
+    // 0.8.3: se intanto la selezione e' cambiata e al posto della barra c'e' il menu senza selezione (o il contrario), il
+    // tasto non si passa all'altro: un comando pensato per la barra non deve diventare per esempio il caricamento rapido
+    if (!n) {
+        const int ne = GameEmptyMenuButtons(rects, ids, 64);
+        if (ne && !sawEmpty) { Log("Comando del posto %d non eseguito: la barra e' sparita (ora c'e' il menu senza selezione)", slot + 1); return; }
+        if (ne) { EmptyMenuClick(slot, rects, ids, ne, bufW, bufH); return; }
+    }
+    if (n && sawEmpty) { Log("Comando del posto %d non eseguito: il menu senza selezione e' sparito (ora c'e' la barra)", slot + 1); return; }
     if (slot >= n) { Log("Comando del posto %d: la barra ha solo %d pulsanti", slot + 1, n); return; }
     char name[72];
     const bool ok = GameBarClick(ids[slot], name, sizeof(name));
@@ -565,9 +637,30 @@ int WINAPI HookSetDIBitsToDevice(HDC hdc, int xDest, int yDest, DWORD w, DWORD h
     // cose da disegnare, in coordinate del buffer (dall'alto), dal basso verso l'alto: simboli della barra, riquadro, aiuto.
     // I simboli stanno nell'angolo in basso a destra dei pulsanti, larghi il 42% dell'altezza del pulsante; con RT tenuto
     // sono pieni, altrimenti un po' trasparenti. Con RT + LT (0.8.0) gli stessi simboli passano ai pulsanti dal tredicesimo.
+    // 0.8.3: alla prova sulla Steam Machine il simbolo A sul pulsante faceva premere A da solo (che seleziona): ora i
+    // simboli compaiono solo con RT tenuto ([Pad] BarSymbols=Hold, Always = come prima) e a sinistra del primo pulsante
+    // c'e' sempre il segno di RT, il tasto da tenere.
     std::vector<Item> want;
     const int first = page ? kSlotCount : 0;
-    const int nb = (std::max)(0, (std::min)(static_cast<int>(g_barRects.size()) - first, kSlotCount));
+    const bool showGlyphs = layer || g_cfg.barSymbolsAlways;
+    const int nb = showGlyphs ? (std::max)(0, (std::min)(static_cast<int>(g_barRects.size()) - first, kSlotCount)) : 0;
+    bool hintOn = false;
+    if (!g_barRects.empty()) {
+        const RECT& b0 = g_barRects[0];
+        const int bh = b0.bottom - b0.top;
+        const int size = (std::max)(16, (std::min)(96, bh * 62 / 100));
+        if (size != g_rtHintSize || style != g_rtHintStyle) {
+            g_rtHint = BuildGlyph(style, 12, size);
+            g_rtHintSize = size;
+            g_rtHintStyle = style;
+            ++g_glyphBuilds;
+        }
+        if (g_rtHint.w) {
+            Item it{ &g_rtHint, Clip({ b0.left - g_rtHint.w - size / 5, b0.top + (bh - g_rtHint.h) / 2, g_rtHint.w, g_rtHint.h }, s.w, s.h),
+                     layer ? 255 : 235 };
+            if (!it.at.Empty() && b0.left - g_rtHint.w - size / 5 >= 0) { want.push_back(it); hintOn = true; }
+        }
+    }
     if (nb) {
         const RECT& b0 = g_barRects[first];
         const int size = (std::max)(12, (std::min)(64, static_cast<int>((b0.bottom - b0.top) * 42 / 100)));
@@ -665,11 +758,11 @@ int WINAPI HookSetDIBitsToDevice(HDC hdc, int xDest, int yDest, DWORD w, DWORD h
     // ripristino al contrario: dove due pannelli si coprono, il secondo ha salvato anche il disegno del primo
     for (size_t i = count; i-- > 0;) if (drawn[i]) SafeRestore(s, region[i], saved[i]);
     g_prev = want;
-    g_drawnState.store((badgeOn && g_badgePanel.w ? 1 : 0) | (helpOn && g_helpPanel.w ? 2 : 0) | (nb ? 4 : 0) | (radialOn ? 8 : 0));
+    g_drawnState.store((badgeOn && g_badgePanel.w ? 1 : 0) | (helpOn && g_helpPanel.w ? 2 : 0) | (nb || hintOn ? 4 : 0) | (radialOn ? 8 : 0));
     g_drawnCursor.store(cursorAt);
     g_drawnVersion.store(version);
 
-    RunCommand(now);
+    RunCommand(s.w, s.h);
     return result;
 }
 
@@ -771,6 +864,17 @@ void OverlayRadial(int kind, int highlight, bool assign, const wchar_t* hint)
     LeaveCriticalSection(&g_lock);
 }
 
+bool OverlayGroupCounts(int counts[10])
+{
+    for (int i = 0; i < 10; ++i) counts[i] = 0;
+    if (!g_lockReady) return false;
+    EnterCriticalSection(&g_lock);
+    const bool ok = g_radKind == 2 && g_groupCountsOk;
+    if (ok) memcpy(counts, g_groupCounts, sizeof(g_groupCounts));
+    LeaveCriticalSection(&g_lock);
+    return ok;
+}
+
 int OverlayRadialCount()
 {
     if (!g_lockReady) return 0;
@@ -786,6 +890,7 @@ void OverlayBarCommand(int slot)
     EnterCriticalSection(&g_lock);
     g_cmdSlot = slot;
     g_cmdAt = GetTickCount();
+    g_cmdEmpty = g_barPadEmpty;
     LeaveCriticalSection(&g_lock);
 }
 

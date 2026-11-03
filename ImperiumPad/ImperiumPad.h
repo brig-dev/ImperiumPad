@@ -14,8 +14,8 @@
 #include <string>
 #include <vector>
 
-#define IMPERIUMPAD_VERSION "0.8.2 (testi allineati alla terminologia del gioco in italiano, inglese e spagnolo)"
-#define IMPERIUMPAD_VERSION_NUM L"0.8.2"
+#define IMPERIUMPAD_VERSION "0.8.4 (radiale dei gruppi con LT che passa ad assegna, comandi del radiale non piu' scaduti)"
+#define IMPERIUMPAD_VERSION_NUM L"0.8.4"
 
 // --- ImperiumPad.cpp: log e informazioni generali -----------------------------
 void        Log(const char* fmt, ...);
@@ -32,6 +32,7 @@ struct Config {
     PadSource padSource      = PadSource::Auto;
     GlyphStyle glyphs        = GlyphStyle::Steam;
     bool      hideKeyLetters = true;    // col pad attivo spegne le lettere della tastiera che Resurrected scrive sulla barra
+    bool      barSymbolsAlways = false; // simboli sui pulsanti della barra sempre (true) o solo con RT tenuto (0.8.3)
     int       controllerIndex = 0;      // primo pad XInput
     int       tickMs         = 8;       // periodo del ciclo principale (ms)
     float     leftDeadzone   = 0.20f;   // zona morta della leva sinistra (0..1)
@@ -120,7 +121,9 @@ enum Txt {
     T_HintRelease,
     T_HintRun,
     T_HintSelect,
-    T_HintAssign,
+    T_HintToAssign,
+    T_HintToSelect,
+    T_HintAssignRun,
     T_HintCancel,
     T_RadNoCommands,
     T_RadTiltCommand,
@@ -159,6 +162,23 @@ enum Txt {
     T_ActKeyboard,
     T_PadSettings,
     T_ActSettings,
+    T_SetBarSymbols,
+    T_ValWhileHeld,
+    T_ValAlways,
+    T_BadgeBarHint,
+    T_EmptyHelp,
+    T_EmptyDiplomacy,
+    T_EmptyQuickSave,
+    T_EmptyParty,
+    T_EmptyNotes,
+    T_EmptyQuickLoad,
+    T_EmptyMainMenu,
+    T_EmptyChat,
+    T_EmptyMinimap,
+    T_RadNoGroups,
+    T_HintNoGroups,
+    T_HintNoSelection,
+    T_BadgeNothingToAssign,
     T_Count
 };
 void           LangInit();                // sceglie la lingua (ini o Settings.ini del gioco)
@@ -202,6 +222,7 @@ void InputMouse(int button, bool down, bool doubleClick);   // 0 sinistro, 1 des
 void InputKey(UINT vk, bool down);        // tasto premuto o rilasciato (PostMessage alla finestra)
 void InputKeyTap(UINT vk);                // premuto e rilasciato
 void InputCtrlPulse(DWORD ms);            // Ctrl virtuale per ms millisecondi, senza Maiusc (Ctrl+cifra = assegna il gruppo)
+void InputClickAt(int x, int y);          // clic sinistro in quel punto (coordinate client) senza spostare il cursore (0.8.3)
 void InputSetVirtualCursor(bool on);      // cursore disegnato dal pad invece di quello di Windows (0.8.0)
 bool InputVirtualCursor();
 
@@ -226,6 +247,7 @@ struct UiControl { RECT r; int kind; };
 int  GameUiControls(UiControl* out, int max, uint32_t* top);   // caselle visibili della finestra con il fuoco
 int  GameBarButtons(RECT* rects, int* ids, int max);           // pulsanti visibili della barra comandi, in ordine
 bool GameBarClick(int id, char* name, int cap);               // clic sul comando id come il giocatore; name = nome interno
+int  GameEmptyMenuButtons(RECT* rects, int* ids, int max);     // pulsanti del menu senza selezione, da sinistra (0.8.3)
 void GameResurrectedLetters(bool hide);   // nasconde (true) o rimette (false) le lettere di Resurrected sulla barra
 bool GameCommandTitle(int id, char* out, int cap);             // titolo italiano del comando, senza marcatori (Windows-1252)
 bool GameGroupCounts(int counts[10]);                          // elementi dei gruppi 0..9 del giocatore locale
@@ -244,12 +266,13 @@ void OverlayHelp(bool on, const wchar_t* title, const std::vector<std::wstring>*
 void OverlayPad(bool active, bool inMap, GlyphStyle style, bool layer, int page);   // simboli sulla barra (layer = RT, page = RT+LT)
 void OverlayCursor(bool on, int x, int y, int clientW, int clientH);   // cursore disegnato (coordinate client)
 bool OverlayBufferSize(int& w, int& h);   // dimensioni del buffer del gioco
-void OverlayBarRects(std::vector<RECT>& out);   // pulsanti visibili della barra (coordinate del buffer)
+void OverlayBarRects(std::vector<RECT>& out);   // pulsanti visibili della barra o del menu senza selezione (buffer)
 bool OverlayUiControls(std::vector<UiControl>& out, int& bufW, int& bufH);   // ultime caselle lette dal gioco (menu)
 void OverlayBarCommand(int slot);         // RT + tasto: comando nel posto 'slot' della barra, eseguito nel thread del gioco
 void OverlayTestBar(const std::vector<RECT>* rects);   // solo per tools/test_overlay: pulsanti finti della barra
 void OverlayRadial(int kind, int highlight, bool assign, const wchar_t* hint);   // 0 chiuso, 1 comandi, 2 gruppi
 int  OverlayRadialCount();                // voci del radiale aperto (0 finche' il thread del gioco non le ha lette)
+bool OverlayGroupCounts(int counts[10]);  // radiale dei gruppi aperto: elementi dei gruppi 0..9 (0.8.4)
 
 // --- GameTick.cpp: lavori nel thread del gioco (camera 0.6.0, il resto 0.8.0) ----
 void CameraInstall();

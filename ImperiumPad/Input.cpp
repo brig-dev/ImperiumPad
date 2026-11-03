@@ -228,6 +228,22 @@ void InputMouse(int button, bool down, bool doubleClick)
     PostMessageA(hwnd, msg, wp, ClientPoint(p.x, p.y));
 }
 
+// Clic sinistro in un punto senza spostare il cursore (0.8.3, pulsanti del menu senza selezione): movimento, pressione e
+// rilascio in quel punto, poi di nuovo il movimento dove sta il cursore. La procedura di finestra del gioco (0x678a10)
+// trasforma ogni messaggio in un evento con le coordinate del messaggio (0x101 movimento, 0x111 pressione, 0x112
+// rilascio), nello stesso ordine: il pulsante vede un clic completo. Non si fa con A o X tenuti (trascinamenti in corso).
+void InputClickAt(int x, int y)
+{
+    HWND hwnd = g_gameHwnd.load();
+    POINT back{};
+    if (!hwnd || !InputCursorClient(back)) return;
+    if (g_leftDown || g_rightDown) { Log("Clic nel punto %d,%d non inviato: A o X tenuto", x, y); return; }
+    PostMessageA(hwnd, WM_MOUSEMOVE, 0, ClientPoint(x, y));
+    PostMessageA(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, ClientPoint(x, y));
+    PostMessageA(hwnd, WM_LBUTTONUP, 0, ClientPoint(x, y));
+    PostMessageA(hwnd, WM_MOUSEMOVE, ShiftActive() ? MK_SHIFT : 0, ClientPoint(back.x, back.y));
+}
+
 void InputKey(UINT vk, bool down)
 {
     HWND hwnd = g_gameHwnd.load();

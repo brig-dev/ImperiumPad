@@ -46,7 +46,11 @@ int  GameUiControls(UiControl*, int, uint32_t* top) { *top = 0; return 0; }
 int  GameBarButtons(RECT*, int*, int) { return 0; }
 bool GameBarClick(int, char* name, int cap) { if (cap > 0) name[0] = 0; return false; }
 bool GameCommandTitle(int, char* out, int cap) { if (cap > 0) out[0] = 0; return false; }
-bool GameGroupCounts(int counts[10]) { const int c[10] = { 0, 12, 5, 0, 1, 0, 0, 30, 0, 0 }; for (int i = 0; i < 10; ++i) counts[i] = c[i]; return true; }
+bool g_testNoGroups = false;   // 0.8.4: radiale con tutti i gruppi vuoti
+bool GameGroupCounts(int counts[10]) { const int c[10] = { 0, 12, 5, 0, 1, 0, 0, 30, 0, 0 }; for (int i = 0; i < 10; ++i) counts[i] = g_testNoGroups ? 0 : c[i]; return true; }
+int  GameEmptyMenuButtons(RECT*, int*, int) { return 0; }
+void InputClickAt(int, int) {}
+std::atomic<HWND> g_gameHwnd{ nullptr };
 
 namespace {
 
@@ -192,21 +196,28 @@ int RunGlyphs(const char* out)
     for (int i = 0; i < 14; ++i) bar.push_back({ 400 + i * 56, 1018, 400 + i * 56 + 52, 1070 });
     OverlayBadge(L"", L"", 0);
     OverlayTestBar(&bar);
+    // 0.8.3: Steam con BarSymbols=Hold e RT lasciato (niente simboli sui pulsanti), Xbox con RT tenuto, PlayStation con
+    // BarSymbols=Always e RT lasciato; in tutti i casi il segno di RT a sinistra del primo pulsante
     const GlyphStyle styles[3] = { GlyphStyle::Steam, GlyphStyle::Xbox, GlyphStyle::PlayStation };
-    const char* names[3] = { "steam", "xbox", "playstation" };
+    const char* names[3] = { "steam_senza_rt", "xbox_rt_tenuto", "playstation_sempre" };
+    const RECT hint{ 400 - 32 - 6 + 8, 1018 + 10 + 8, 400 - 6 - 8, 1018 + 10 + 32 - 8 };   // centro del segno di RT
     for (int k = 0; k < 3; ++k) {
+        g_cfg.barSymbolsAlways = k == 2;
         OverlayPad(true, true, styles[k], k == 1, 0);
         Sleep(120);
         gameBlit(0, 0, W, H);
+        const bool expect = k != 0;
         for (int i = 0; i < 14; ++i) {
             const int n = inkIn(bar[i]);
-            if (i < kSlotCount && n == 0) { printf("ERRORE: %s, pulsante %d senza simbolo\n", names[k], i + 1); ++errors; }
+            if (i < kSlotCount && expect && n == 0) { printf("ERRORE: %s, pulsante %d senza simbolo\n", names[k], i + 1); ++errors; }
+            if (i < kSlotCount && !expect && n != 0) { printf("ERRORE: %s, pulsante %d con un simbolo senza RT\n", names[k], i + 1); ++errors; }
             if (i >= kSlotCount && n != 0) { printf("ERRORE: %s, pulsante %d con un simbolo (oltre il dodicesimo)\n", names[k], i + 1); ++errors; }
         }
+        if (!inkIn(hint)) { printf("ERRORE: %s, manca il segno di RT accanto alla barra\n", names[k]); ++errors; }
         // ritaglio della barra per guardarla
         char path[MAX_PATH];
         sprintf_s(path, "%s\\simboli_%s.bmp", out, names[k]);
-        const int cx = 396, cy = 1012, cw = 14 * 56 + 8, ch = 64;
+        const int cx = 356, cy = 1012, cw = 14 * 56 + 48, ch = 64;
         std::vector<uint32_t> crop(static_cast<size_t>(cw) * ch);
         for (int y = 0; y < ch; ++y) memcpy(&crop[static_cast<size_t>(y) * cw], &d[static_cast<size_t>(cy + y) * W + cx], cw * 4);
         BITMAPFILEHEADER f{}; BITMAPINFOHEADER h{};
@@ -221,6 +232,8 @@ int RunGlyphs(const char* out)
     gameBlit(10, 10, 50, 50);
     for (int i = 0; i < kSlotCount; ++i)
         if (inkIn(bar[i])) { printf("ERRORE: simbolo %d rimasto dopo lo spegnimento del pad\n", i + 1); ++errors; break; }
+    if (inkIn(hint)) { printf("ERRORE: segno di RT rimasto dopo lo spegnimento del pad\n"); ++errors; }
+    g_cfg.barSymbolsAlways = false;
     OverlayTestBar(nullptr);
     DeleteObject(bmp);
     DeleteDC(dc);
@@ -295,13 +308,16 @@ int RunRadials(const char* out)
         bar.push_back(real ? RECT{ 630 + i * 55, 1027, 630 + i * 55 + 51, 1079 } : RECT{ 400 + i * 56, 1018, 400 + i * 56 + 52, 1070 });
     OverlayTestBar(&bar);
     OverlayPad(true, true, GlyphStyle::Xbox, false, 0);
-    struct Case { int kind, hi; bool assign; const wchar_t* hint; const char* name; };
+    struct Case { int kind, hi; bool assign, noGroups; const wchar_t* hint; const char* name; };
     const Case cases[] = {
-        { 1, 2, false, L"Lascia RB: esegue   B: annulla", "radiale_comandi" },
-        { 2, 1, false, L"Lascia LB: seleziona   tieni LT: assegna   B: annulla", "radiale_gruppi" },
-        { 2, 7, true, L"Lascia LB: seleziona   tieni LT: assegna   B: annulla", "radiale_gruppi_assegna" },
+        { 1, 2, false, false, L"Lascia RB: esegue   B: annulla", "radiale_comandi" },
+        { 2, 1, false, false, L"Lascia LB: seleziona   LT: assegna invece di selezionare   B: annulla", "radiale_gruppi" },
+        { 2, 7, true, false, L"Lascia LB: assegna   LT: seleziona invece di assegnare   B: annulla", "radiale_gruppi_assegna" },
+        { 2, -1, false, true, L"Seleziona delle unit\u00e0, poi tieni LB, premi LT, scegli un numero e lascia LB.   B: chiudi",
+          "radiale_gruppi_vuoti" },
     };
     for (const Case& c : cases) {
+        g_testNoGroups = c.noGroups;
         OverlayRadial(c.kind, c.hi, c.assign, c.hint);
         Sleep(120);
         gameBlit(0, 0, W, H);      // legge le voci
@@ -310,6 +326,7 @@ int RunRadials(const char* out)
         if (!real && centreChanged() < 1000) { printf("ERRORE: %s non disegnato al centro\n", c.name); ++errors; }
         save(c.name);
     }
+    g_testNoGroups = false;
     OverlayRadial(0, -1, false, nullptr);
     gameBlit(10, 10, 40, 40);
     if (centreChanged() != 0) { printf("ERRORE: radiale rimasto dopo la chiusura (%d pixel)\n", centreChanged()); ++errors; }
@@ -355,7 +372,7 @@ int RunLanguages(const char* out)
         std::vector<RECT> bar;
         OverlayTestBar(&bar);
         OverlayPad(true, true, GlyphStyle::PlayStation, false, 0);
-        std::wstring hint = TrF(T_HintRelease, L"L1") + Tr(T_HintSelect) + TrF(T_HintAssign, L"L2") + TrF(T_HintCancel, Tr(T_PsCircle));
+        std::wstring hint = TrF(T_HintRelease, L"L1") + Tr(T_HintSelect) + TrF(T_HintToAssign, L"L2") + TrF(T_HintCancel, Tr(T_PsCircle));
         OverlayRadial(2, 3, false, hint.c_str());
         Sleep(120);
         for (int i = 0; i < 2; ++i) {

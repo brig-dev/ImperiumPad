@@ -37,6 +37,14 @@
 //  - Y nei menu: tastiera di Steam per scrivere (Steam.cpp);
 //  - View tenuto + Menu: impostazioni di ImperiumPad nel gioco, salvate nell'ini;
 //  - [Buttons] nell'ini: tasti riassegnati.
+// Versione 0.8.3 (prova sulla Steam Machine del 31/10/2026: A sul simbolo dell'edificio selezionava invece di eseguire):
+//  - i simboli sui pulsanti compaiono tenendo RT ([Pad] BarSymbols, anche nelle impostazioni), accanto alla barra resta
+//    il segno di RT; la prima volta in mappa e con Y da solo un riquadro dice come si fa;
+//  - senza selezione RT + tasto (e il radiale RB) vale per il menu senza selezione: guida, diplomazia, salvataggio e
+//    caricamento rapido, seleziona gruppo, obiettivi, menu principale, conversazione, mappa strategica.
+// Versione 0.8.4 (seconda prova sulla Steam Machine): radiale dei gruppi con LT che passa da seleziona ad assegna, niente
+// azione su un gruppo vuoto o senza selezione, spiegazione nel radiale quando non ci sono gruppi; comandi del radiale
+// non piu' "scaduti" per errore (Overlay.cpp).
 // "In mappa" = partita in corso, vista della mappa visibile e con il fuoco (nessuna finestra del gioco aperta).
 // Il pad agisce solo con il gioco in primo piano; uscendo, tutti i pulsanti e i tasti tenuti vengono rilasciati.
 
@@ -167,6 +175,15 @@ void ShowStatus(bool connected, DWORD ms)
     OverlayBadge(title.c_str(), PadStatus(connected).c_str(), ms);
 }
 
+// 0.8.3: come si usano i comandi della barra (RT tenuto + tasto), la prima volta che in mappa c'e' una barra e quando si
+// preme Y da solo (che in mappa da solo non fa nulla).
+void ShowBarHint(DWORD ms)
+{
+    std::wstring title = L"ImperiumPad ";
+    title += IMPERIUMPAD_VERSION_NUM;
+    OverlayBadge(title.c_str(), TrF(T_BadgeBarHint, Names().rt).c_str(), ms);
+}
+
 // Righe dell'aiuto: tasto del pad (nello stile scelto), tasto del simulatore (se attivo), azione. Stesso schema di
 // docs/ImperiumPad_controller.md.
 void ShowHelp(bool on)
@@ -245,6 +262,8 @@ struct Runtime {
     // radiale aperto (0.6.0): 0 nessuno, 1 comandi della barra (RB), 2 gruppi (LB); voce scelta
     int   radial = 0;
     int   radialHi = -1;
+    bool  radialAssign = false;  // gruppi: assegna invece di selezionare (0.8.4: LT passa da uno all'altro)
+    bool  ltHeld = false;        // LT oltre la soglia al giro precedente
     // impostazioni nel gioco (0.8.0)
     bool  settingsOpen = false;
     int   settingsSel = 0;
@@ -581,8 +600,8 @@ void WatchEvents(Runtime& r, const GameState& gs, DWORD now)
 // --- Impostazioni nel gioco (0.8.0) -----------------------------------------------------------------------------------
 // View tenuto + Menu apre un pannello (lo stesso dell'aiuto) con le opzioni principali; croce su/giu' sceglie,
 // sinistra/destra o A cambia, B o Menu chiude. Ogni cambio vale subito e si scrive nell'ini.
-enum SetItem { S_Lang, S_Symbols, S_CursorSpeed, S_CameraSpeed, S_AnalogCamera, S_Magnet, S_Vibration, S_SlowMotion,
-               S_HideLetters, S_Cursor, S_Count };
+enum SetItem { S_Lang, S_Symbols, S_BarSymbols, S_CursorSpeed, S_CameraSpeed, S_AnalogCamera, S_Magnet, S_Vibration,
+               S_SlowMotion, S_HideLetters, S_Cursor, S_Count };
 
 const char* kLangKeys[4] = { "Auto", "Italian", "English", "Spanish" };
 const float kMagnetVals[4] = { 1.0f, 0.7f, 0.5f, 0.35f };
@@ -611,6 +630,7 @@ std::wstring SettingValue(int item)
         return i == 1 ? L"Italiano" : i == 2 ? L"English" : L"Espa\u00f1ol";
     }
     case S_Symbols: return Names().style;
+    case S_BarSymbols: return g_cfg.barSymbolsAlways ? std::wstring(Tr(T_ValAlways)) : TrF(T_ValWhileHeld, Names().rt);
     case S_CursorSpeed: swprintf_s(b, L"%.1f", g_cfg.cursorSpeed); return b;
     case S_CameraSpeed: swprintf_s(b, L"%.1f", g_cfg.cameraSpeed); return b;
     case S_AnalogCamera: return Tr(g_cfg.cameraAnalog ? T_ValOn : T_ValOff);
@@ -649,6 +669,10 @@ void SettingChange(Runtime& r, int item, int dir, DWORD now)
     }
     case S_Symbols:
         SaveGlyphStyle(static_cast<GlyphStyle>((static_cast<int>(g_cfg.glyphs) + (dir > 0 ? 1 : 2)) % 3));
+        break;
+    case S_BarSymbols:
+        g_cfg.barSymbolsAlways = !g_cfg.barSymbolsAlways;
+        ConfigWrite("Pad", "BarSymbols", g_cfg.barSymbolsAlways ? "Always" : "Hold");
         break;
     case S_CursorSpeed:
         g_cfg.cursorSpeed = (std::min)(2.5f, (std::max)(0.3f, std::round((g_cfg.cursorSpeed + 0.1f * dir) * 10) / 10));
@@ -695,8 +719,9 @@ void SettingChange(Runtime& r, int item, int dir, DWORD now)
 
 void ShowSettings(const Runtime& r)
 {
-    static const Txt labels[S_Count] = { T_SetLanguage, T_SetSymbols, T_SetCursorSpeed, T_SetCameraSpeed, T_SetAnalogCamera,
-                                         T_SetMagnet, T_SetVibration, T_SetSlowMotion, T_SetHideLetters, T_SetCursorMode };
+    static const Txt labels[S_Count] = { T_SetLanguage, T_SetSymbols, T_SetBarSymbols, T_SetCursorSpeed, T_SetCameraSpeed,
+                                         T_SetAnalogCamera, T_SetMagnet, T_SetVibration, T_SetSlowMotion, T_SetHideLetters,
+                                         T_SetCursorMode };
     std::vector<std::wstring> rows;
     for (int i = 0; i < S_Count; ++i) {
         const bool sel = i == r.settingsSel;
@@ -745,6 +770,8 @@ void HandleButtons(Runtime& r, const PadState& p, const GameState& gs, DWORD now
     WORD pressed = cur & ~prev, released = prev & ~cur;
     for (int i = 0; i < 16; ++i) if (pressed & (1u << i)) r.pressedAt[i] = now;
     auto heldFor = [&](WORD mask) { return now - r.pressedAt[BitIndex(mask)]; };
+    const bool ltNow = p.lt > 0.5f, ltPressed = ltNow && !r.ltHeld;   // LT appena premuto (0.8.4)
+    r.ltHeld = ltNow;
 
     // impostazioni aperte: prendono tutti i tasti
     if (HandleSettings(r, pressed, released, now)) { r.prev = cur; return; }
@@ -795,14 +822,24 @@ void HandleButtons(Runtime& r, const PadState& p, const GameState& gs, DWORD now
     // Radiali (0.6.0): RB tenuto = comandi della barra, LB tenuto = gruppi. Aperto: la leva sinistra sceglie la voce (il
     // cursore resta fermo), la croce sinistra/destra passa alla voce vicina, B chiude senza fare nulla; lasciando il
     // dorsale si esegue la voce scelta. Gli altri tasti intanto non fanno nulla.
+    // 0.8.4 (prova sulla Steam Machine: assegnare non riusciva): nei gruppi LT non va piu' tenuto fino al rilascio, che
+    // lasciando insieme LB e LT finiva in "seleziona"; ogni pressione di LT passa da seleziona ad assegna e ritorno, e il
+    // radiale si apre gia' in "assegna" se LT e' tenuto. Assegnare senza nulla selezionato e scegliere un gruppo vuoto non
+    // fanno nulla (prima il gruppo vuoto toglieva la selezione).
+    bool justOpened = false;
     if (r.inMap && !r.radial && !rtNow) {
         const DWORD tap = static_cast<DWORD>(g_cfg.tapMs);
         if ((cur & PAD_RB) && !(r.consumed & PAD_RB) && heldFor(PAD_RB) >= tap) {
             r.radial = 1; r.radialHi = -1; Log("RB tenuto: radiale dei comandi aperto");
         }
         else if ((cur & PAD_LB) && !(r.consumed & PAD_LB) && heldFor(PAD_LB) >= tap) {
-            r.radial = 2; r.radialHi = -1; Log("LB tenuto: radiale dei gruppi aperto");
+            r.radial = 2; r.radialHi = -1; r.radialAssign = ltNow; justOpened = true;
+            Log("LB tenuto: radiale dei gruppi aperto (%s)", ltNow ? "assegna, LT tenuto" : "seleziona");
         }
+    }
+    if (r.radial == 2 && ltPressed && !justOpened) {
+        r.radialAssign = !r.radialAssign;
+        Log("Radiale dei gruppi: LT, ora %s", r.radialAssign ? "assegna" : "seleziona");
     }
     if (r.radial && !r.inMap) CloseRadial(r, "non si e' piu' in mappa");
     if (r.radial) {
@@ -834,10 +871,21 @@ void HandleButtons(Runtime& r, const PadState& p, const GameState& gs, DWORD now
             }
             else {
                 const int g = (hi + 1) % 10;
-                if (p.lt > 0.5f) {
+                int counts[10];
+                const bool known = OverlayGroupCounts(counts);
+                if (r.radialAssign && !gs.selCount) {
+                    std::wstring title = L"ImperiumPad ";
+                    title += IMPERIUMPAD_VERSION_NUM;
+                    OverlayBadge(title.c_str(), Tr(T_BadgeNothingToAssign), 4000);
+                    Log("Radiale dei gruppi: niente da assegnare al gruppo %d (nessuna selezione)", g);
+                }
+                else if (r.radialAssign) {
                     InputCtrlPulse(300);
                     InputKeyTap('0' + g);
-                    Log("Radiale dei gruppi: Ctrl+%d (assegna la selezione al gruppo %d)", g, g);
+                    Log("Radiale dei gruppi: Ctrl+%d (assegna la selezione, %u elementi, al gruppo %d)", g, gs.selCount, g);
+                }
+                else if (known && !counts[g]) {
+                    Log("Radiale dei gruppi: gruppo %d vuoto, selezione lasciata com'era", g);
                 }
                 else {
                     InputKeyTap('0' + g);
@@ -896,8 +944,9 @@ void HandleButtons(Runtime& r, const PadState& p, const GameState& gs, DWORD now
         else Log("B: niente da annullare, Esc non inviato");
     }
 
-    // LT: Maiusc virtuale tenuto (con RT tenuto LT cambia pagina dei comandi, niente Maiusc)
-    const bool wantShift = p.lt > 0.5f && !rtNow;
+    // LT: Maiusc virtuale tenuto (con RT tenuto LT cambia pagina dei comandi, niente Maiusc; 0.8.4: nemmeno con un radiale
+    // aperto, dove LT sceglie tra seleziona e assegna)
+    const bool wantShift = ltNow && !rtNow && !r.radial;
     if (wantShift != r.shift) {
         r.shift = wantShift;
         InputSetShift(wantShift);
@@ -980,7 +1029,10 @@ void HandleButtons(Runtime& r, const PadState& p, const GameState& gs, DWORD now
         else if (r.inMap) { InputKeyTap('I'); Log("View tocco: I (pannello informazioni)"); }
     }
 
-    if ((pressed & PAD_Y) && r.inMap) Log("Y: nessuna azione da solo (con RT tenuto: comando della barra)");
+    if ((pressed & PAD_Y) && r.inMap) {
+        Log("Y: nessuna azione da solo (con RT tenuto: comando della barra); suggerimento a schermo");
+        ShowBarHint(5000);
+    }
 
     r.prev = cur;
 }
@@ -996,7 +1048,7 @@ void RunOnWindow(HWND hwnd)
     DWORD last = GetTickCount(), nextDiag = 0;
     bool wasActive = false, wasConnected = false;
     bool simWas = PadSimulatorActive();
-    bool statusShown = false;
+    bool statusShown = false, barHintShown = false;
     if (g_cfg.cursorMode == CursorMode::Virtual) InputSetVirtualCursor(true);
 
     while (IsWindow(hwnd)) {
@@ -1084,6 +1136,17 @@ void RunOnWindow(HWND hwnd)
             Log("Modalita': %s", inMap ? "mappa (partita in corso, nessuna finestra aperta)" : "menu e finestre");
         }
 
+        // 0.8.3: la prima volta che in mappa compare la barra (o il menu senza selezione) si dice come si usano i comandi
+        if (padInUse && inMap && !barHintShown && !r.rtHeld) {
+            std::vector<RECT> bar;
+            OverlayBarRects(bar);
+            if (!bar.empty()) {
+                ShowBarHint(8000);
+                barHintShown = true;
+                Log("Suggerimento a schermo: comandi della barra con RT tenuto + tasto");
+            }
+        }
+
         UpdateMagnet(r, padInUse);
         if (!r.radial && !r.settingsOpen) UpdateCursor(r, pad, dt, now);
         else r.moving = false;   // radiale o impostazioni aperti: la leva sinistra non muove il cursore
@@ -1091,11 +1154,24 @@ void RunOnWindow(HWND hwnd)
         HandleButtons(r, pad, gs, now);
         if (r.radial) {
             const PadNames n = Names();
-            std::wstring hint = TrF(T_HintRelease, r.radial == 1 ? n.rb : n.lb);
-            hint += Tr(r.radial == 1 ? T_HintRun : T_HintSelect);
-            if (r.radial == 2) hint += TrF(T_HintAssign, n.lt);
-            hint += TrF(T_HintCancel, n.b);
-            OverlayRadial(r.radial, r.radialHi, r.radial == 2 && pad.lt > 0.5f, hint.c_str());
+            std::wstring hint;
+            int counts[10];
+            bool anyGroup = !OverlayGroupCounts(counts);   // finche' non sono letti si fa come se ci fossero gruppi
+            for (int i = 0; i < 10 && !anyGroup; ++i) anyGroup = counts[i] > 0;
+            if (r.radial == 1) {
+                hint = TrF(T_HintRelease, n.rb) + Tr(T_HintRun) + TrF(T_HintCancel, n.b);
+            }
+            else if (r.radialAssign && !gs.selCount) {
+                hint = TrF(T_HintNoSelection, n.b);   // 0.8.4: assegna senza nulla selezionato
+            }
+            else if (!r.radialAssign && !anyGroup) {
+                hint = TrF(T_HintNoGroups, n.lb, n.lt, n.lb, n.b);   // 0.8.4: nessun gruppo ancora, come si crea
+            }
+            else {
+                hint = TrF(T_HintRelease, n.lb) + Tr(r.radialAssign ? T_HintAssignRun : T_HintSelect) +
+                       TrF(r.radialAssign ? T_HintToSelect : T_HintToAssign, n.lt) + TrF(T_HintCancel, n.b);
+            }
+            OverlayRadial(r.radial, r.radialHi, r.radial == 2 && r.radialAssign, hint.c_str());
         }
     }
     ReleaseAll(r, "finestra del gioco chiusa");

@@ -6,6 +6,7 @@
 
 #include "ImperiumPad.h"
 #include <cstring>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -225,6 +226,48 @@ int GameBarButtons(RECT* rects, int* ids, int max)
     __except (EXCEPTION_EXECUTE_HANDLER) {
         return 0;
     }
+    return n;
+}
+
+// Menu "senza selezione" (0.8.3): quando non e' selezionato nulla, al posto della barra il gioco mostra la finestra a
+// [gestore della selezione + 0x150] [R: EmptyMenu in controls.cpp di Resurrected], creata da 0x6cc5b0 con
+// gameini/cmdbar/empty_<civilta'>.ini: una fila di nove pulsanti CUIButton, da sinistra Guida 0x1008, Diplomazia 0x1005,
+// Salvataggio rapido 0x1003, Seleziona gruppo 0x1009, Obiettivi 0x1002, Caricamento rapido 0x1004, Menu principale 0x1001,
+// Conversazione 0x1006, Mappa strategica 0x1007. Il figlio con un id si trova col metodo +0x7c della finestra (id, nome
+// della classe), come fa Resurrected; i clic li gestisce il metodo +0x50 (0x6ccc80, messaggio 0x12345604).
+int GameEmptyMenuButtons(RECT* rects, int* ids, int max)
+{
+    static const int kIds[9] = { 0x1008, 0x1005, 0x1003, 0x1009, 0x1002, 0x1004, 0x1001, 0x1006, 0x1007 };
+    if (!g_knownExe || !g_cfg.memory) return 0;
+    int n = 0;
+    __try {
+        const uint32_t sel = U32(kSelManager);
+        const uint32_t menu = sel ? U32(sel + 0x150) : 0;
+        if (!menu || !(U32(menu + 0x28) & 2)) return 0;
+        const short* m = reinterpret_cast<const short*>(menu + 0x10);
+        if (m[0] <= 0 && m[1] <= 0) return 0;   // non ancora sistemata sullo schermo
+        using GetChild_t = uint32_t(__fastcall*)(uint32_t self, uint32_t edx, int id, const char* cls);
+        const auto getChild = reinterpret_cast<GetChild_t>(U32(U32(menu) + 0x7c));
+        for (int id : kIds) {
+            if (n >= max) break;
+            const uint32_t b = getChild(menu, 0, id, reinterpret_cast<const char*>(U32(kNameButton)));
+            if (!b || !(U32(b + 0x28) & 2)) continue;
+            const short* r = reinterpret_cast<const short*>(b + 0x10);
+            if (r[2] <= r[0] || r[3] <= r[1]) continue;
+            rects[n] = { r[0], r[1], r[2] + 1, r[3] + 1 };
+            ids[n] = id;
+            ++n;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+    // da sinistra a destra, come i posti della barra (nei file del gioco sono gia' in quest'ordine)
+    for (int i = 1; i < n; ++i)
+        for (int j = i; j > 0 && rects[j].left < rects[j - 1].left; --j) {
+            std::swap(rects[j], rects[j - 1]);
+            std::swap(ids[j], ids[j - 1]);
+        }
     return n;
 }
 
