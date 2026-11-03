@@ -4,6 +4,8 @@ Native controller support for **Imperivm RTC HD – Great Battles of Rome** (Ste
 
 ImperiumPad is a small DLL (`wininet.dll`, 32 bit) that sits next to the game and works together with [Imperivm Resurrected](https://github.com/imperivm-resurrected/imperivm-resurrected) 1.0.3, which fixes music under Proton and brings Direct3D 11. It does not change any game file.
 
+Download: [GitHub releases](https://github.com/brig-dev/ImperiumPad/releases) or [ModDB](https://www.moddb.com/mods/imperiumpad).
+
 ## What it does
 
 - Left stick moves the cursor (with acceleration and a "magnet" that slows it over units, buildings and buttons); A = left click, X = right click (the game's default action), B = cancel, LT = Shift (add to the selection, queue commands).
@@ -31,6 +33,7 @@ To uninstall, delete `wininet.dll` and `ImperiumPad.ini` (and the launch option)
 - Hiding Resurrected's letters works only with Resurrected 1.0.3; with other versions they simply stay.
 - Multiplayer: commands go through the game's own functions; slow motion is never used online.
 - Built with Visual Studio (C++17, Win32); GitHub builds the zip at every change.
+- Made by brig-dev with the help of Claude (Anthropic) for the analysis and the code; the ModDB logo was made with an AI image generator.
 - ImperiumPad is not affiliated with the game's publishers or with Imperivm Resurrected. It contains no game files and no code from Resurrected.
 
 ## Licence
@@ -44,6 +47,8 @@ MIT: see [LICENSE](LICENSE). The game and Imperivm Resurrected have their own li
 Supporto nativo al controller per **Imperivm RTC HD – Great Battles of Rome** (Steam, app 752580), pensato per il divano, lo Steam Deck e la Steam Machine.
 
 ImperiumPad è una piccola DLL (`wininet.dll`, 32 bit) che sta accanto al gioco e lavora insieme a [Imperivm Resurrected](https://github.com/imperivm-resurrected/imperivm-resurrected) 1.0.3, che sistema la musica sotto Proton e porta Direct3D 11. Non modifica nessun file del gioco.
+
+Download: [release su GitHub](https://github.com/brig-dev/ImperiumPad/releases) oppure [ModDB](https://www.moddb.com/mods/imperiumpad).
 
 ## Cosa fa
 
@@ -71,6 +76,7 @@ Per togliere la mod basta cancellare `wininet.dll` e `ImperiumPad.ini` (e l'opzi
 
 - Nascondere le lettere di Resurrected funziona solo con Resurrected 1.0.3; con altre versioni restano.
 - In rete i comandi passano dalle funzioni del gioco; il tempo rallentato non si usa mai in rete.
+- Fatta da brig-dev con l'aiuto di Claude (Anthropic) per l'analisi e il codice; il logo di ModDB e' fatto con un generatore di immagini con l'IA.
 - ImperiumPad non e' legata agli editori del gioco ne' a Imperivm Resurrected. Non contiene file del gioco ne' codice di Resurrected.
 
 ## Licenza
