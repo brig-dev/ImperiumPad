@@ -48,7 +48,21 @@ bool GameBarClick(int, char* name, int cap) { if (cap > 0) name[0] = 0; return f
 bool GameCommandTitle(int, char* out, int cap) { if (cap > 0) out[0] = 0; return false; }
 bool g_testNoGroups = false;   // 0.8.4: radiale con tutti i gruppi vuoti
 bool GameGroupCounts(int counts[10]) { const int c[10] = { 0, 12, 5, 0, 1, 0, 0, 30, 0, 0 }; for (int i = 0; i < 10; ++i) counts[i] = g_testNoGroups ? 0 : c[i]; return true; }
+bool GameGroupInfo(GroupInfo g[11])
+{
+    // 0.10.1: gruppo 1 eroe e 24 unita', 2 dodici soldati feriti, 4 un eroe quasi morto, 7 trenta soldati; selezione 18 con eroe
+    const int c[11] = { 0, 25, 12, 0, 1, 0, 0, 30, 0, 0, 18 }, h[11] = { 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1 },
+              hp[11] = { -1, 82, 45, -1, 20, -1, -1, 95, -1, -1, 70 };
+    for (int i = 0; i < 11; ++i) { g[i].count = g_testNoGroups && i < 10 ? 0 : c[i]; g[i].heroes = g[i].count ? h[i] : 0; g[i].hp = g[i].count ? hp[i] : -1; }
+    return true;
+}
 int  GameEmptyMenuButtons(RECT*, int*, int) { return 0; }
+int  GameCheat(const char*, int) { return 0; }
+int  GameCheatSpawn(const char*, int) { return 1; }
+bool GameCommandParam(int, char* out, int cap) { if (cap > 0) out[0] = 0; return false; }
+bool GameCommandName(int, char* out, int cap) { if (cap > 0) out[0] = 0; return false; }
+int  GameNextSettlement(int& index, int& total) { index = 2; total = 3; return 1; }
+void GameCheatTick() {}
 void InputClickAt(int, int) {}
 std::atomic<HWND> g_gameHwnd{ nullptr };
 
@@ -315,7 +329,17 @@ int RunRadials(const char* out)
         { 2, 7, true, false, L"Lascia LB: assegna   LT: seleziona invece di assegnare   B: annulla", "radiale_gruppi_assegna" },
         { 2, -1, false, true, L"Seleziona delle unit\u00e0, poi tieni LB, premi LT, scegli un numero e lascia LB.   B: chiudi",
           "radiale_gruppi_vuoti" },
+        { 3, 2, false, false, L"Lascia RB: usa   B: annulla", "radiale_trucchi" },
     };
+    // 0.9.0: voci del radiale dei trucchi per un edificio (come Core.cpp), dieci come i gruppi
+    {
+        std::vector<CheatEntry> ch = {
+            { L"+1K", L"Oro +1000 all'insediamento", 1, CI_Coins }, { L"+10K", L"Oro +10000 all'insediamento", 1, CI_Coins },
+            { L"MAX", L"Oro +100000 all'insediamento (il massimo per volta)", 1, CI_Coins }, { L"+1K", L"Cibo +1000", 2, CI_Loaf },
+            { L"+10K", L"Cibo +10000", 2, CI_Loaf }, { L"MAX", L"Cibo +100000", 2, CI_Loaf }, { L"+50", L"Popolazione massima +50", 0, CI_House },
+            { L"+100", L"Abitanti +100", 0, CI_People }, { L"", L"Ripara l'edificio", 0, CI_Hammer }, { L"", L"Cattura l'insediamento", 3, CI_Flag } };
+        OverlayCheatItems(ch);
+    }
     for (const Case& c : cases) {
         g_testNoGroups = c.noGroups;
         OverlayRadial(c.kind, c.hi, c.assign, c.hint);
@@ -327,6 +351,23 @@ int RunRadials(const char* out)
         save(c.name);
     }
     g_testNoGroups = false;
+    // 0.9.1: le icone degli altri due radiali dei trucchi (unita' e niente selezionato), una sola immagine ciascuno
+    {
+        const std::vector<CheatEntry> units = { { L"", L"Cura", 3, CI_Heart }, { L"", L"Viveri", 2, CI_Loaf }, { L"10", L"Livello 10", 1, CI_Star },
+            { L"50", L"Livello 50", 1, CI_Star }, { L"MAX", L"Livello massimo", 1, CI_Star }, { L"", L"Elimina", 3, CI_Skull } };
+        const std::vector<CheatEntry> none = { { L"", L"Mappa", 4, CI_Map }, { L"", L"Visione", 4, CI_Eye }, { L"", L"Pace", 0, CI_WhiteFlag },
+            { L"", L"Tecnologie", 0, CI_Book }, { L"EROI", L"Esperienza eroi", 1, CI_Star }, { L"SOLDATI", L"Esperienza soldati", 0, CI_Star } };
+        const std::vector<CheatEntry>* sets[2] = { &units, &none };
+        const char* names2[2] = { "radiale_trucchi_unita", "radiale_trucchi_niente" };
+        for (int k = 0; k < 2; ++k) {
+            OverlayCheatItems(*sets[k]);
+            OverlayRadial(3, 1, false, L"Lascia RB: usa   B: annulla");
+            Sleep(120);
+            gameBlit(0, 0, W, H);
+            gameBlit(0, 0, W, H);
+            save(names2[k]);
+        }
+    }
     OverlayRadial(0, -1, false, nullptr);
     gameBlit(10, 10, 40, 40);
     if (centreChanged() != 0) { printf("ERRORE: radiale rimasto dopo la chiusura (%d pixel)\n", centreChanged()); ++errors; }
@@ -434,6 +475,177 @@ int RunCursor(const char* out)
     return errors;
 }
 
+// Vetrina (0.10.0): le novita' disegnate sopra schermate vere del gioco (sfondi RGB555 1920x1080 dall'alto, preparati
+// a parte: vetrina_fortezza.raw, vetrina_menu.raw nella cartella di uscita), per guardarle come saranno nel gioco.
+int RunShowcase(const char* out)
+{
+    auto load = [&](const char* name, std::vector<uint16_t>& mem) {
+        char path[MAX_PATH];
+        sprintf_s(path, "%s\\%s", out, name);
+        FILE* fp = nullptr;
+        fopen_s(&fp, path, "rb");
+        if (!fp) return false;
+        const bool ok = fread(mem.data(), 2, mem.size(), fp) == mem.size();
+        fclose(fp);
+        return ok;
+    };
+    std::vector<uint16_t> fort(static_cast<size_t>(W) * H), menu(static_cast<size_t>(W) * H);
+    if (!load("vetrina_fortezza.raw", fort) || !load("vetrina_menu.raw", menu)) { printf("vetrina: sfondi mancanti, saltata\n"); return 0; }
+    Bmi16 bmi{};
+    bmi.h.biSize = sizeof(bmi.h); bmi.h.biWidth = W; bmi.h.biHeight = -H; bmi.h.biPlanes = 1; bmi.h.biBitCount = 16;
+    bmi.h.biCompression = BI_RGB;
+    BITMAPINFO di{};
+    di.bmiHeader.biSize = sizeof(di.bmiHeader); di.bmiHeader.biWidth = W; di.bmiHeader.biHeight = -H;
+    di.bmiHeader.biPlanes = 1; di.bmiHeader.biBitCount = 32;
+    void* destBits = nullptr;
+    HDC dc = CreateCompatibleDC(nullptr);
+    HBITMAP bmp = CreateDIBSection(dc, &di, DIB_RGB_COLORS, &destBits, nullptr, 0);
+    SelectObject(dc, bmp);
+    auto shot = [&](std::vector<uint16_t>& mem, const char* name) {
+        Sleep(130);
+        for (int i = 0; i < 3; ++i) {
+            SetDIBitsToDevice(dc, 0, 0, W, H, 0, 0, 0, H, mem.data(), reinterpret_cast<BITMAPINFO*>(&bmi), DIB_RGB_COLORS);
+            GdiFlush();
+            Sleep(110);
+        }
+        char path[MAX_PATH];
+        sprintf_s(path, "%s\\%s.bmp", out, name);
+        SaveBmp(path, static_cast<uint32_t*>(destBits));
+    };
+    g_cfg.language = "Italian";
+    LangInit();
+    OverlayBadge(L"", L"", 0);
+    // 1) impostazioni, riga scelta "Dimensione di simboli e testi"
+    {
+        const Txt labels[] = { T_SetLanguage, T_SetSymbols, T_SetBarSymbols, T_SetUiScale, T_SetCursorSpeed, T_SetCameraSpeed,
+                               T_SetAnalogCamera, T_SetMagnet, T_SetVibration, T_SetSlowMotion, T_SetHideLetters, T_SetCursorMode, T_SetButtons };
+        const std::wstring values[] = { L"Automatico (come il gioco)", L"Steam", TrF(T_ValWhileHeld, L"R2"), L"Grande (125%)", L"1.3", L"1.0",
+                                        Tr(T_ValOn), Tr(T_ValMedium), Tr(T_ValStrong), Tr(T_ValOn), Tr(T_ValOn), Tr(T_ValAuto), Tr(T_ValOpen) };
+        std::vector<std::wstring> rows;
+        for (int i = 0; i < 13; ++i) {
+            const bool sel = i == 3;
+            rows.push_back(std::wstring(sel ? L"\u25b6 " : L"    ") + Tr(labels[i]) + L"\t\t" + (sel ? L"\u25c0  " + values[i] + L"  \u25b6" : values[i]));
+        }
+        OverlayHelp(true, Tr(T_SetTitle), &rows, TrF(T_SetFoot, L"A", L"B", L"Menu").c_str());
+        shot(fort, "vetrina_1_impostazioni");
+    }
+    // 2) pagina dei tasti, A e B scambiati, riga scelta B
+    {
+        const wchar_t* names[] = { L"A", L"B", L"X", L"Y", L"L1", L"R1", L"View", L"Menu", L"L3", L"R3", Tr(T_PadUp), Tr(T_PadDown), Tr(T_PadLeft), Tr(T_PadRight) };
+        std::vector<std::wstring> rows;
+        for (int i = 0; i < 14; ++i) {
+            const bool sel = i == 1;
+            std::wstring value = i == 0 ? L"B" : i == 1 ? L"A" : std::wstring(names[i]) + L"  " + Tr(T_ButtonsSame);
+            rows.push_back(std::wstring(sel ? L"\u25b6 " : L"    ") + names[i] + L"\t\t" + (sel ? L"\u25c0  " + value + L"  \u25b6" : value));
+        }
+        OverlayHelp(true, Tr(T_ButtonsTitle), &rows, TrF(T_ButtonsFoot, L"X", L"B").c_str());
+        shot(fort, "vetrina_2_tasti");
+    }
+    // 3) aiuto con le righe nuove (controller vero: due colonne)
+    {
+        const std::wstring rows[] = {
+            std::wstring(Tr(T_PadLeftStick)) + L"\t\t" + Tr(T_ActCursor), std::wstring(Tr(T_PadRightStick)) + L"\t\t" + Tr(T_ActCamera),
+            std::wstring(L"A\t\t") + Tr(T_ActSelect), std::wstring(L"X\t\t") + Tr(T_ActAction), std::wstring(L"B\t\t") + Tr(T_ActCancel),
+            std::wstring(L"L2\t\t") + Tr(T_ActShift), TrF(T_HelpHeldPlusKey, L"R2") + L"\t\t" + TrF(T_ActBarCommand, L"L2"),
+            std::wstring(L"R1 / L1\t\t") + Tr(T_ActHeroes), std::wstring(Tr(T_PadUp)) + L"\t\t" + Tr(T_ActHeroArmy),
+            std::wstring(Tr(T_PadDown)) + L"\t\t" + Tr(T_ActLastAlert), std::wstring(Tr(T_PadLeft)) + L"\t\t" + Tr(T_ActHealthBars),
+            std::wstring(Tr(T_PadRight)) + L"\t\t" + Tr(T_ActSeeThrough), std::wstring(Tr(T_PadMenus)) + L"\t\t" + Tr(T_ActMenuJump),
+            std::wstring(L"L3\t\t") + Tr(T_ActBigMap), std::wstring(L"R3\t\t") + Tr(T_ActCentre), TrF(T_PadHeld, L"R3") + L"\t\t" + Tr(T_ActNextSettlement),
+            TrF(T_PadPlusDpad, L"L2") + L"\t\t" + Tr(T_ActHalfSelect), TrF(T_PadPlusUpDown, L"View") + L"\t\t" + Tr(T_ActSpeed),
+            std::wstring(L"Menu\t\t") + Tr(T_ActGameMenu), std::wstring(L"View\t\t") + Tr(T_ActInfo), TrF(T_PadSettings, L"View", L"Menu") + L"\t\t" + Tr(T_ActSettings),
+            TrF(T_PadHeld, L"Y") + L"\t\t" + Tr(T_ActCheats), TrF(T_PadYMenus, L"Y") + L"\t\t" + TrF(T_ActKeyboard, L"A") };
+        std::vector<std::wstring> v(std::begin(rows), std::end(rows));
+        OverlayHelp(true, TrF(T_HelpTitle, L"Steam").c_str(), &v, TrF(T_FootStyle, L"View").c_str());
+        shot(fort, "vetrina_3_aiuto");
+        OverlayHelp(false, L"", nullptr, L"");
+    }
+    // 4) radiale dei trucchi con un edificio, con "Crea truppe..." (spade incrociate)
+    std::vector<RECT> fortBar;
+    for (int i = 0; i < 4; ++i) fortBar.push_back({ 850 + i * 55, 1027, 850 + i * 55 + 51, 1079 });
+    OverlayTestBar(&fortBar);
+    OverlayPad(true, true, GlyphStyle::Steam, false, 0);
+    {
+        std::vector<CheatEntry> ch = {
+            { L"+1K", TrF(T_ChGold, 1000), 1, CI_Coins }, { L"+10K", TrF(T_ChGold, 10000), 1, CI_Coins },
+            { L"MAX", TrF(T_ChGold, 100000) + Tr(T_ChMaxOnce), 1, CI_Coins }, { L"+1K", TrF(T_ChFood, 1000), 2, CI_Loaf },
+            { L"+10K", TrF(T_ChFood, 10000), 2, CI_Loaf }, { L"MAX", TrF(T_ChFood, 100000) + Tr(T_ChMaxOnce), 2, CI_Loaf },
+            { L"+50", TrF(T_ChMaxPop, 50), 0, CI_House }, { L"+100", TrF(T_ChPopulation, 100), 0, CI_People },
+            { L"", Tr(T_ChRepair), 0, CI_Hammer }, { L"", Tr(T_ChCapture), 3, CI_Flag }, { L"", Tr(T_ChSpawnMenu), 3, CI_Swords } };
+        OverlayCheatItems(ch);
+        OverlayRadial(3, 10, false, (TrF(T_HintRelease, L"Y") + Tr(T_HintUse) + TrF(T_HintCancel, L"B")).c_str());
+        shot(fort, "vetrina_4_trucchi_edificio");
+    }
+    // 5) radiale "crea truppe" con le icone vere della barra della fortezza
+    {
+        OverlayTestTitles({ L"Assolda un eroe", L"Addestra miliziani", L"Addestra frombolieri", L"Addestra cavalieri" });
+        OverlayRadial(4, 1, false, TrF(T_SpawnHint, L"A", 20, L"B").c_str());
+        shot(fort, "vetrina_5_crea_truppe");
+        OverlayTestTitles({});
+        OverlayRadial(0, -1, false, nullptr);
+    }
+    // 6) riquadri: velocita', insediamento, meta' della selezione
+    {
+        OverlayBadge(L"ImperiumPad 0.10.0", TrF(T_BadgeSpeed, 125).c_str(), 60000);
+        shot(fort, "vetrina_6a_velocita");
+        OverlayBadge(L"ImperiumPad 0.10.0", TrF(T_BadgeSettlement, 2, 3).c_str(), 60000);
+        shot(fort, "vetrina_6b_insediamento");
+        OverlayBadge(L"ImperiumPad 0.10.0", Tr(T_BadgeSelHealthUp), 60000);
+        shot(fort, "vetrina_6c_selezione");
+        OverlayBadge(L"", L"", 0);
+    }
+    // 8) 0.10.1: radiale dei gruppi con il contenuto (gruppo 1 scelto; poi "assegna" con la selezione)
+    {
+        const std::wstring hint = TrF(T_HintRelease, L"L1") + Tr(T_HintSelect) + TrF(T_HintToAssign, L"L2") + TrF(T_HintCancel, L"B");
+        OverlayRadial(2, 0, false, hint.c_str());
+        shot(fort, "vetrina_8a_gruppi");
+        OverlayRadial(2, 2, true, hint.c_str());
+        shot(fort, "vetrina_8b_gruppi_assegna");
+        OverlayRadial(0, -1, false, nullptr);
+    }
+    // 9) 0.10.1: trucchi classici nei radiali delle unita' e senza selezione
+    {
+        std::vector<CheatEntry> ch = {
+            { L"", Tr(T_ChHeal), 3, CI_Heart }, { L"", Tr(T_ChRation), 2, CI_Loaf }, { L"10", TrF(T_ChLevel, 10), 1, CI_Star },
+            { L"50", TrF(T_ChLevel, 50), 1, CI_Star }, { L"MAX", TrF(T_ChLevelMax, 999), 1, CI_Star }, { L"", Tr(T_ChKill), 3, CI_Skull },
+            { L"+20", TrF(T_ChAttack, 20), 3, CI_Swords }, { L"+100", TrF(T_ChAttack, 100), 3, CI_Swords },
+            { L"+20", TrF(T_ChDefense, 20), 4, CI_Shield }, { L"+100", TrF(T_ChDefense, 100), 4, CI_Shield },
+            { L"MAX", Tr(T_ChBonus), 1, CI_Shield } };
+        OverlayCheatItems(ch);
+        OverlayRadial(3, 7, false, (TrF(T_HintRelease, L"Y") + Tr(T_HintUse) + TrF(T_HintCancel, L"B")).c_str());
+        shot(fort, "vetrina_9a_trucchi_unita");
+        std::vector<CheatEntry> ch2 = {
+            { L"", Tr(T_ChMap), 4, CI_Map }, { L"", Tr(T_ChVision), 4, CI_Eye }, { L"", Tr(T_ChPeace), 0, CI_WhiteFlag },
+            { L"", Tr(T_ChTech), 0, CI_Book }, { Tr(T_ChShortHeroes), TrF(T_ChExpHeroes, 1000), 1, CI_Star },
+            { Tr(T_ChShortTroops), TrF(T_ChExpTroops, 1000), 0, CI_Star }, { L"", Tr(T_ChFog), 4, CI_Cloud },
+            { L"x10", Tr(T_ChSpeed10), 1, CI_Hourglass } };
+        OverlayCheatItems(ch2);
+        OverlayRadial(3, 7, false, (TrF(T_HintRelease, L"Y") + Tr(T_HintUse) + TrF(T_HintCancel, L"B")).c_str());
+        shot(fort, "vetrina_9b_trucchi_niente");
+        OverlayRadial(0, -1, false, nullptr);
+    }
+    // 7) dimensioni: simboli e segno di R2 sulla barra del menu senza selezione, con R2 tenuto, a 80%, 100%, 150%
+    {
+        std::vector<RECT> mbar;
+        for (int i = 0; i < 9; ++i) mbar.push_back({ 654 + i * 71, 1027, 654 + i * 71 + 51, 1078 });
+        OverlayTestBar(&mbar);
+        const float scales[3] = { 0.8f, 1.0f, 1.5f };
+        const char* names[3] = { "vetrina_7a_dimensione_80", "vetrina_7b_dimensione_100", "vetrina_7c_dimensione_150" };
+        for (int k = 0; k < 3; ++k) {
+            g_cfg.uiScale = scales[k];
+            OverlayPad(true, true, GlyphStyle::Steam, true, 0);
+            shot(menu, names[k]);
+        }
+        g_cfg.uiScale = 1.0f;
+    }
+    OverlayTestBar(nullptr);
+    OverlayPad(false, false, GlyphStyle::Steam, false, 0);
+    g_cfg.language = "Auto";
+    DeleteObject(bmp);
+    DeleteDC(dc);
+    printf("vetrina salvata\n");
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -458,6 +670,7 @@ int main(int argc, char** argv)
     errors += RunRadials(out);
     errors += RunLanguages(out);
     errors += RunCursor(out);
+    errors += RunShowcase(out);
     printf(errors ? "PROVA FALLITA: %d errori\n" : "PROVA RIUSCITA\n", errors);
     return errors ? 1 : 0;
 }

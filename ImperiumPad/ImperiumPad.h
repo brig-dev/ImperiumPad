@@ -14,8 +14,8 @@
 #include <string>
 #include <vector>
 
-#define IMPERIUMPAD_VERSION "0.8.4 (radiale dei gruppi con LT che passa ad assegna, comandi del radiale non piu' scaduti)"
-#define IMPERIUMPAD_VERSION_NUM L"0.8.4"
+#define IMPERIUMPAD_VERSION "0.10.3 (crea truppe: classi con la tecnologia, elenco stabile)"
+#define IMPERIUMPAD_VERSION_NUM L"0.10.3"
 
 // --- ImperiumPad.cpp: log e informazioni generali -----------------------------
 void        Log(const char* fmt, ...);
@@ -33,6 +33,7 @@ struct Config {
     GlyphStyle glyphs        = GlyphStyle::Steam;
     bool      hideKeyLetters = true;    // col pad attivo spegne le lettere della tastiera che Resurrected scrive sulla barra
     bool      barSymbolsAlways = false; // simboli sui pulsanti della barra sempre (true) o solo con RT tenuto (0.8.3)
+    float     uiScale        = 1.0f;    // dimensione di simboli, pannelli e radiali (0.10.0): 0,8 / 1 / 1,25 / 1,5
     int       controllerIndex = 0;      // primo pad XInput
     int       tickMs         = 8;       // periodo del ciclo principale (ms)
     float     leftDeadzone   = 0.20f;   // zona morta della leva sinistra (0..1)
@@ -64,6 +65,11 @@ const char* GlyphStyleName(GlyphStyle s);
 void SaveGlyphStyle(GlyphStyle s);        // scrive [Pad] Glyphs nell'ini (scelta fatta nel gioco)
 void ConfigWrite(const char* section, const char* key, const char* value);   // scrive una voce dell'ini (menu nel gioco)
 WORD RemapButtons(WORD buttons);          // applica [Buttons] (tasti riassegnati)
+int  ButtonCount();                       // tasti riassegnabili (0.10.0, pagina delle impostazioni)
+const char* ButtonId(int i);              // nome in [Buttons]: A B X Y LB RB View Menu L3 R3 Up Down Left Right
+WORD ButtonMaskAt(int i);
+int  ButtonTarget(int i);                 // a quale tasto corrisponde ora il tasto fisico i
+void SetButtonTarget(int i, int target);  // riassegna e scrive l'ini (target == i: come all'inizio)
 
 // --- Lang.cpp: testi a schermo in italiano, inglese e spagnolo (0.7.0) ----------
 enum class Lang { Italian, English, Spanish };
@@ -178,7 +184,78 @@ enum Txt {
     T_RadNoGroups,
     T_HintNoGroups,
     T_HintNoSelection,
+    T_ChGold,
+    T_ChFood,
+    T_ChMaxOnce,
+    T_ChMaxPop,
+    T_ChPopulation,
+    T_ChRepair,
+    T_ChCapture,
+    T_ChHeal,
+    T_ChRation,
+    T_ChLevel,
+    T_ChLevelMax,
+    T_ChKill,
+    T_ChExpHeroes,
+    T_ChExpTroops,
+    T_ChMap,
+    T_ChVision,
+    T_ChPeace,
+    T_ChTech,
+    T_PadHeld,
+    T_ChShortHeroes,
+    T_ChShortTroops,
+    T_RadTiltCheat,
+    T_HintUse,
+    T_BadgeCheatsOff,
+    T_BadgeCheatsNoRes,
+    T_BadgeCheatSent,
+    T_ActCheats,
+    T_ChSpawnMenu,
+    T_SpawnTitle,
+    T_SpawnNone,
+    T_SpawnTilt,
+    T_SpawnHint,
+    T_BadgeSpawned,
+    T_BadgeSelHealthUp,
+    T_BadgeSelHealthDown,
+    T_BadgeSelExpUp,
+    T_BadgeSelExpDown,
+    T_BadgeSpeed,
+    T_BadgeSpeedOnline,
+    T_BadgeSettlement,
+    T_BadgeNoSettlement,
+    T_ActHalfSelect,
+    T_ActSpeed,
+    T_ActNextSettlement,
+    T_PadPlusUpDown,
+    T_PadPlusDpad,
+    T_SetUiScale,
+    T_ValSmall,
+    T_ValNormal,
+    T_ValLarge,
+    T_ValHuge,
+    T_SetButtons,
+    T_ValOpen,
+    T_ButtonsTitle,
+    T_ButtonsFoot,
+    T_ButtonsSame,
     T_BadgeNothingToAssign,
+    T_ChBonus,
+    T_ChAttack,
+    T_ChDefense,
+    T_ChFog,
+    T_ChSpeed10,
+    T_GrpUnit,
+    T_GrpUnits,
+    T_GrpHero,
+    T_GrpHeroUnit,
+    T_GrpHeroUnits,
+    T_GrpHeroes,
+    T_GrpHeroesUnits,
+    T_GrpHealth,
+    T_GrpSelection,
+    T_SpawnNoBuilding,
     T_Count
 };
 void           LangInit();                // sceglie la lingua (ini o Settings.ini del gioco)
@@ -222,6 +299,7 @@ void InputMouse(int button, bool down, bool doubleClick);   // 0 sinistro, 1 des
 void InputKey(UINT vk, bool down);        // tasto premuto o rilasciato (PostMessage alla finestra)
 void InputKeyTap(UINT vk);                // premuto e rilasciato
 void InputCtrlPulse(DWORD ms);            // Ctrl virtuale per ms millisecondi, senza Maiusc (Ctrl+cifra = assegna il gruppo)
+void InputShiftSuppress(DWORD ms);        // Maiusc virtuale spento per ms millisecondi anche con LT tenuto (0.10.0)
 void InputClickAt(int x, int y);          // clic sinistro in quel punto (coordinate client) senza spostare il cursore (0.8.3)
 void InputSetVirtualCursor(bool on);      // cursore disegnato dal pad invece di quello di Windows (0.8.0)
 bool InputVirtualCursor();
@@ -249,8 +327,18 @@ int  GameBarButtons(RECT* rects, int* ids, int max);           // pulsanti visib
 bool GameBarClick(int id, char* name, int cap);               // clic sul comando id come il giocatore; name = nome interno
 int  GameEmptyMenuButtons(RECT* rects, int* ids, int max);     // pulsanti del menu senza selezione, da sinistra (0.8.3)
 void GameResurrectedLetters(bool hide);   // nasconde (true) o rimette (false) le lettere di Resurrected sulla barra
+bool GameResurrectedLoaded();             // c'e' la winmm.dll di Imperivm Resurrected, qualsiasi versione (0.10.0)
+int  GameCheatSpawn(const char* cls, int count);   // trucco "crea truppe" della classe cls (thread del gioco)
+bool GameCommandParam(int id, char* out, int cap); // parametro del comando (per "train..." la classe dell'unita')
+bool GameCommandName(int id, char* out, int cap);  // nome interno del comando (trainIMilitiaman...)
+int  GameNextSettlement(int& index, int& total);   // camera sul prossimo municipio proprio (thread del gioco); 0 = nessuno
+int  GameCheat(const char* verb, int value);   // trucco di Resurrected in coda (thread del gioco); 0 = niente (0.9.0)
+void GameCheatTick();                     // manda il prossimo comando dei trucchi (thread del gioco, ogni copia)
 bool GameCommandTitle(int id, char* out, int cap);             // titolo italiano del comando, senza marcatori (Windows-1252)
 bool GameGroupCounts(int counts[10]);                          // elementi dei gruppi 0..9 del giocatore locale
+// 0.10.1: contenuto dei gruppi 0..9 e (posto 10) della selezione: elementi, eroi, salute media in % (-1 = non si sa)
+struct GroupInfo { int count = 0, heroes = 0, hp = -1; };
+bool GameGroupInfo(GroupInfo groups[11]);                      // SOLO nel thread del gioco
 bool GameCameraMove(int dx, int dy);                           // sposta la vista come il timer di scorrimento (thread del gioco)
 bool GameScrollParams(int& speed, int& align, int& stepMax);   // velocita' delle frecce, allineamento e passo massimo
 bool GameObjectAt(int x, int y);                               // oggetto visibile in quel punto del buffer (thread del gioco)
@@ -270,9 +358,19 @@ void OverlayBarRects(std::vector<RECT>& out);   // pulsanti visibili della barra
 bool OverlayUiControls(std::vector<UiControl>& out, int& bufW, int& bufH);   // ultime caselle lette dal gioco (menu)
 void OverlayBarCommand(int slot);         // RT + tasto: comando nel posto 'slot' della barra, eseguito nel thread del gioco
 void OverlayTestBar(const std::vector<RECT>* rects);   // solo per tools/test_overlay: pulsanti finti della barra
+void OverlayTestTitles(const std::vector<std::wstring>& titles);   // solo per tools/test_overlay: titoli di prova
 void OverlayRadial(int kind, int highlight, bool assign, const wchar_t* hint);   // 0 chiuso, 1 comandi, 2 gruppi
 int  OverlayRadialCount();                // voci del radiale aperto (0 finche' il thread del gioco non le ha lette)
 bool OverlayGroupCounts(int counts[10]);  // radiale dei gruppi aperto: elementi dei gruppi 0..9 (0.8.4)
+// Radiale dei trucchi (0.9.0, tipo 3): voci decise dal thread del pad; colore 0 bronzo, 1 oro, 2 cibo, 3 rosso, 4 azzurro;
+// icona disegnata nel disco (0.9.1).
+enum CheatIconId { CI_None, CI_Coins, CI_Loaf, CI_House, CI_People, CI_Hammer, CI_Flag, CI_WhiteFlag, CI_Heart, CI_Star,
+                   CI_Skull, CI_Map, CI_Eye, CI_Book, CI_Swords, CI_Shield, CI_Hourglass, CI_Cloud };
+struct CheatEntry { std::wstring label, title; int color; int icon; };
+void OverlayCheatItems(const std::vector<CheatEntry>& items);
+void OverlayCheat(const char* verb, int value);   // trucco da mandare nel thread del gioco
+void OverlaySpawn(int index, int count);   // 0.10.0: crea count unita' della voce index del radiale "crea truppe" (tipo 4)
+void OverlayNextSettlement();             // 0.10.0: camera sul prossimo insediamento proprio (thread del gioco)
 
 // --- GameTick.cpp: lavori nel thread del gioco (camera 0.6.0, il resto 0.8.0) ----
 void CameraInstall();
@@ -282,6 +380,8 @@ void TickCursor(int bufX, int bufY);      // posizione del cursore nel buffer, p
 bool TickHover();                         // sotto il cursore c'e' un oggetto
 int  TickHeroHealth(int& handle);         // salute in percento dell'eroe proprio selezionato, -1 se nessuno
 void TickSlowMotion(bool on);             // tempo rallentato (radiale aperto)
+void TickSpeedStep(int dir);              // 0.10.0: velocita' della partita su (+1) o giu' (-1), solo in singolo; 10 = 10x o normale (0.10.1)
+int  TickSpeedResult();                   // velocita' dopo l'ultimo passo (0 nulla di nuovo, -1 in rete)
 
 // --- Steam.cpp: tastiera a schermo di Steam (0.8.0) ------------------------------
 bool SteamKeyboard(int x, int y, int w, int h);

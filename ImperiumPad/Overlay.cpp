@@ -36,10 +36,83 @@
 
 namespace ovl {
 
+namespace {
+
+bool g_faceArrows = true;   // il carattere scelto ha le frecce piene (U+25B6, U+25C0) della riga scelta delle impostazioni
+
+// Carattere dei testi (0.10.1). Segoe UI c'e' su Windows ma non sotto Proton (Steam Machine): li' Wine ne sceglieva un
+// altro e le lettere accentate si vedevano male (prova del 06/11/2026). Si prende il primo dei candidati che esiste davvero
+// (il nome del carattere ottenuto e' quello chiesto) e ha tutte le lettere accentate dei testi.
+std::wstring ChooseFace()
+{
+    static const wchar_t* const kFaces[] = { L"Segoe UI", L"Tahoma", L"Arial", L"Liberation Sans", L"DejaVu Sans", L"Verdana" };
+    static const wchar_t kAccents[] = L"\u00e0\u00e8\u00e9\u00ec\u00f2\u00f9\u00e1\u00ed\u00f3\u00fa\u00f1\u00c0\u00c8\u00c9";
+    HDC screen = GetDC(nullptr);
+    HDC dc = CreateCompatibleDC(screen);
+    ReleaseDC(nullptr, screen);
+    std::wstring chosen, tried;
+    for (const wchar_t* face : kFaces) {
+        HFONT f = CreateFontW(-20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                              ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, face);
+        if (!f) continue;
+        HGDIOBJ old = SelectObject(dc, f);
+        wchar_t got[LF_FACESIZE] = {};
+        GetTextFaceW(dc, LF_FACESIZE, got);
+        WORD idx[32] = {};
+        const int n = static_cast<int>(wcslen(kAccents));
+        bool all = _wcsicmp(got, face) == 0 &&
+                   GetGlyphIndicesW(dc, kAccents, n, idx, GGI_MARK_NONEXISTING_GLYPHS) == static_cast<DWORD>(n);
+        for (int i = 0; all && i < n; ++i) if (idx[i] == 0xffff) all = false;
+        SelectObject(dc, old);
+        DeleteObject(f);
+        tried += std::wstring(tried.empty() ? L"" : L", ") + face + L" -> " + (got[0] ? got : L"?") + (all ? L" (ok)" : L"");
+        if (all) { chosen = face; break; }
+    }
+    if (chosen.empty()) chosen = L"Segoe UI";
+    // con Segoe UI le frecce arrivano da un altro carattere collegato da Windows (non le ha in se'): si tengono, come prima
+    if (chosen != L"Segoe UI") {
+        HFONT f = CreateFontW(-20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                              ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, chosen.c_str());
+        HGDIOBJ old = SelectObject(dc, f);
+        WORD idx[2] = {};
+        g_faceArrows = GetGlyphIndicesW(dc, L"\u25b6\u25c0", 2, idx, GGI_MARK_NONEXISTING_GLYPHS) == 2 && idx[0] != 0xffff && idx[1] != 0xffff;
+        SelectObject(dc, old);
+        DeleteObject(f);
+    }
+    DeleteDC(dc);
+    char a[512], b[64];
+    WideCharToMultiByte(CP_ACP, 0, tried.c_str(), -1, a, sizeof(a), nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, chosen.c_str(), -1, b, sizeof(b), nullptr, nullptr);
+    Log("Overlay: carattere dei testi \"%s\" (provati: %s)%s", b, a, g_faceArrows ? "" : "; frecce sostituite da < >");
+    return chosen;
+}
+
+} // namespace
+
+const std::wstring& FontFace()
+{
+    static const std::wstring face = ChooseFace();
+    return face;
+}
+
+// Testo pronto per il carattere scelto: senza le frecce piene, se mancano, quelle semplici.
+std::wstring FitText(const std::wstring& s)
+{
+    FontFace();
+    if (g_faceArrows) return s;
+    std::wstring t = s;
+    for (wchar_t& ch : t) {
+        if (ch == 0x25b6) ch = L'>';
+        else if (ch == 0x25c0) ch = L'<';
+    }
+    return t;
+}
+
 HFONT MakeFont(int px, bool bold)
 {
+    const std::wstring& face = FontFace();
     return CreateFontW(-px, 0, 0, 0, bold ? FW_BOLD : FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                       CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+                       CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, face.c_str());
 }
 
 } // namespace ovl
@@ -74,11 +147,19 @@ int              g_cmdSlot = -1;       // comando chiesto con RT + tasto, in att
 DWORD            g_cmdAt = 0;
 bool             g_testBarOn = false;  // solo per tools/test_overlay
 std::vector<RECT> g_testBar;
+std::vector<std::wstring> g_testTitles;   // solo per tools/test_overlay: titoli del radiale "crea truppe"
 int              g_radKind = 0;        // radiale aperto: 0 nessuno, 1 comandi della barra, 2 gruppi
 int              g_radHi = -1;         // voce scelta
 bool             g_radAssign = false;  // gruppi: LT tenuto, si assegna invece di selezionare
 std::wstring     g_radHint;            // riga di aiuto sotto il titolo (nomi dei tasti dello stile scelto)
 int              g_radCount = 0;       // voci del radiale aperto lette dal thread del gioco
+std::vector<CheatEntry> g_cheatItems;  // 0.9.0: voci del radiale dei trucchi, dal thread del pad
+std::vector<std::string> g_spawnClasses;   // 0.10.0: classi del radiale "crea truppe" (solo thread del gioco)
+std::vector<std::wstring> g_spawnTitles;
+int              g_spawnIndex = -1, g_spawnCount = 0;   // truppa chiesta dal thread del pad
+bool             g_wantSettlement = false;             // camera sul prossimo insediamento
+std::string      g_cheatVerb;          // trucco da mandare nel thread del gioco (vuoto = nessuno)
+int              g_cheatValue = 0;
 int              g_groupCounts[10] = {};   // 0.8.4: elementi dei gruppi 0..9 letti col radiale dei gruppi aperto
 bool             g_groupCountsOk = false;
 // caselle dei menu lette nel thread del gioco, per il thread del pad
@@ -110,9 +191,22 @@ struct Rect { int x = 0, y = 0, w = 0, h = 0; bool Empty() const { return w <= 0
 
 // --- Costruzione dei pannelli con GDI ------------------------------------------------------------------------
 struct Segment { std::wstring text; COLORREF color; int x; bool bold; };
-struct Line { std::vector<Segment> segs; int height; };
+// 0.10.0: hl = riga scelta (impostazioni), con fondo dorato e tacca a sinistra; rule = filetto dorato sotto la riga
+// (titolo); zebra = righe alterne appena piu' chiare (aiuto).
+struct Line { std::vector<Segment> segs; int height; bool hl = false; bool rule = false; bool zebra = false; };
 
+// Fondo del pannello (0.10.0): sfumatura dal bruno caldo in alto al quasi nero in basso, invece del colore unico.
+COLORREF PanelBack(int y, int h)
+{
+    const float t = h > 1 ? static_cast<float>(y) / (h - 1) : 0.0f;
+    return RGB(static_cast<int>(38 - 18 * t), static_cast<int>(29 - 14 * t), static_cast<int>(19 - 9 * t));
+}
 
+COLORREF Mix(COLORREF a, COLORREF b, float t)
+{
+    return RGB(static_cast<int>(GetRValue(a) + (GetRValue(b) - GetRValue(a)) * t), static_cast<int>(GetGValue(a) + (GetGValue(b) - GetGValue(a)) * t),
+               static_cast<int>(GetBValue(a) + (GetBValue(b) - GetBValue(a)) * t));
+}
 
 // Disegna le righe in una DIB a 32 bit: testo bianco su nero, poi il colore di ogni segmento e lo sfondo
 // semitrasparente diventano un'immagine ARGB.
@@ -146,9 +240,10 @@ Panel BuildPanel(const std::vector<Line>& lines, int width, int pad, int fontPx)
         for (const Segment& s : l.segs) {
             HGDIOBJ old = SelectObject(dc, s.bold ? bold : normal);
             RECT r{ s.x, y, width - pad, y + l.height };
-            DrawTextW(dc, s.text.c_str(), -1, &r, DT_LEFT | DT_TOP | DT_NOPREFIX | DT_SINGLELINE | DT_END_ELLIPSIS);
+            const std::wstring text = FitText(s.text);
+            DrawTextW(dc, text.c_str(), -1, &r, DT_LEFT | DT_TOP | DT_NOPREFIX | DT_SINGLELINE | DT_END_ELLIPSIS);
             RECT calc = r;
-            DrawTextW(dc, s.text.c_str(), -1, &calc, DT_LEFT | DT_TOP | DT_NOPREFIX | DT_SINGLELINE | DT_CALCRECT);
+            DrawTextW(dc, text.c_str(), -1, &calc, DT_LEFT | DT_TOP | DT_NOPREFIX | DT_SINGLELINE | DT_CALCRECT);
             for (int yy = r.top; yy < r.bottom && yy < height; ++yy)
                 for (int xx = r.left; xx < calc.right + 2 && xx < width; ++xx) colorMap[static_cast<size_t>(yy) * width + xx] = s.color;
             SelectObject(dc, old);
@@ -156,23 +251,57 @@ Panel BuildPanel(const std::vector<Line>& lines, int width, int pad, int fontPx)
         y += l.height;
     }
     GdiFlush();
+    // fondo riga per riga (0.10.0): sfumatura, riga scelta dorata, righe alterne, filetto sotto il titolo
+    std::vector<COLORREF> rowBack(static_cast<size_t>(height));
+    std::vector<int> rowAlpha(static_cast<size_t>(height), kBackAlpha);
+    std::vector<char> rowHl(static_cast<size_t>(height), 0), rowRule(static_cast<size_t>(height), 0);
+    for (int yy = 0; yy < height; ++yy) rowBack[yy] = PanelBack(yy, height);
+    {
+        int ly = pad, n = 0;
+        for (const Line& l : lines) {
+            const bool zebraOn = l.zebra && (n++ % 2);
+            for (int yy = ly; yy < ly + l.height && yy < height; ++yy) {
+                if (l.hl) { rowBack[yy] = Mix(rowBack[yy], RGB(150, 112, 40), 0.55f); rowAlpha[yy] = 228; rowHl[yy] = 1; }
+                else if (zebraOn) rowBack[yy] = Mix(rowBack[yy], RGB(80, 62, 38), 0.35f);
+            }
+            if (l.rule && ly + l.height - 3 < height) rowRule[ly + l.height - 3] = 1;
+            ly += l.height;
+        }
+    }
     p.argb.resize(static_cast<size_t>(width) * height);
     const auto* src = static_cast<const uint32_t*>(bits);
     for (int i = 0; i < width * height; ++i) {
+        const int yy = i / width, xx = i % width;
         const uint32_t v = src[i];
         const int cr = static_cast<int>((v >> 16) & 0xff), cg = static_cast<int>((v >> 8) & 0xff), cb = static_cast<int>(v & 0xff);
         int ink = cr > cg ? cr : cg;          // intensita' del testo (bianco antialiasing su nero)
         if (cb > ink) ink = cb;
+        COLORREF back = rowBack[yy];
+        int alpha = rowAlpha[yy];
+        if (rowRule[yy] && xx >= pad && xx < width - pad) {
+            // filetto: dorato al centro, che sfuma verso i lati
+            const float t = 1.0f - std::fabs((xx - width / 2.0f) / (width / 2.0f - pad));
+            back = Mix(back, RGB(214, 170, 84), (std::max)(0.0f, t));
+            alpha = 255;
+        }
+        if (rowHl[yy] && xx >= 3 && xx < 3 + (std::max)(3, pad / 4)) { back = RGB(240, 196, 96); alpha = 255; }   // tacca
         const COLORREF c = colorMap[i];
-        const int r = (GetRValue(kBack) * (255 - ink) + GetRValue(c) * ink) / 255;
-        const int g = (GetGValue(kBack) * (255 - ink) + GetGValue(c) * ink) / 255;
-        const int b = (GetBValue(kBack) * (255 - ink) + GetBValue(c) * ink) / 255;
-        const int a = kBackAlpha + (255 - kBackAlpha) * ink / 255;
+        const int r = (GetRValue(back) * (255 - ink) + GetRValue(c) * ink) / 255;
+        const int g = (GetGValue(back) * (255 - ink) + GetGValue(c) * ink) / 255;
+        const int b = (GetBValue(back) * (255 - ink) + GetBValue(c) * ink) / 255;
+        const int a = alpha + (255 - alpha) * ink / 255;
         p.argb[i] = (static_cast<uint32_t>(a) << 24) | (r << 16) | (g << 8) | b;
     }
-    // bordo dorato sottile
-    for (int x = 0; x < width; ++x) { p.argb[x] = 0xffb08c3c; p.argb[static_cast<size_t>(height - 1) * width + x] = 0xffb08c3c; }
-    for (int yy = 0; yy < height; ++yy) { p.argb[static_cast<size_t>(yy) * width] = 0xffb08c3c; p.argb[static_cast<size_t>(yy) * width + width - 1] = 0xffb08c3c; }
+    // doppio bordo (0.10.0): oro fuori, bronzo scuro dentro a 3 pixel; angoli smussati
+    const uint32_t gold = 0xffc89a44, dark = 0xff6a5028;
+    for (int x = 0; x < width; ++x) { p.argb[x] = gold; p.argb[static_cast<size_t>(height - 1) * width + x] = gold; }
+    for (int yy = 0; yy < height; ++yy) { p.argb[static_cast<size_t>(yy) * width] = gold; p.argb[static_cast<size_t>(yy) * width + width - 1] = gold; }
+    if (width > 8 && height > 8) {
+        for (int x = 3; x < width - 3; ++x) { p.argb[3 * width + x] = dark; p.argb[static_cast<size_t>(height - 4) * width + x] = dark; }
+        for (int yy = 3; yy < height - 3; ++yy) { p.argb[static_cast<size_t>(yy) * width + 3] = dark; p.argb[static_cast<size_t>(yy) * width + width - 4] = dark; }
+        const int cx[4] = { 0, width - 1, 0, width - 1 }, cy[4] = { 0, 0, height - 1, height - 1 };
+        for (int k = 0; k < 4; ++k) p.argb[static_cast<size_t>(cy[k]) * width + cx[k]] = 0;
+    }
     SelectObject(dc, oldBmp);
     DeleteObject(bmp);
     DeleteObject(normal);
@@ -217,13 +346,26 @@ void BuildPanels(int bufferHeight)
     b1 = g_badge1; b2 = g_badge2; title = g_helpTitle; foot = g_helpFoot; rows = g_helpRows;
     LeaveCriticalSection(&g_lock);
 
-    const int font = bufferHeight / 42 > 12 ? bufferHeight / 42 : 12;    // 25 px a 1080, 51 a 2160
+    // 25 px a 1080, 51 a 2160; per la dimensione scelta nelle impostazioni (0.10.0)
+    int font = (std::max)(12, static_cast<int>(bufferHeight / 42 * g_cfg.uiScale));
+    // l'aiuto (ormai oltre venti righe) deve stare nello schermo anche con la dimensione piu' grande: se non ci sta,
+    // il carattere scende quanto serve (righe 1,3 volte il carattere, piu' titolo, piede e margini)
+    {
+        const float rowsH = 1.3f * (static_cast<float>(rows.size()) + 3.5f) + 1.4f;
+        const int fit = static_cast<int>(bufferHeight * 0.95f / rowsH);
+        if (!rows.empty() && font > fit) font = (std::max)(12, fit);
+    }
     const int lineH = font * 13 / 10, pad = font * 2 / 3;
 
     // riquadro informativo
     std::vector<Line> badge;
     badge.push_back({ { { b1, kGold, pad, true } }, lineH });
-    if (!b2.empty()) badge.push_back({ { { b2, kWhite, pad, false } }, lineH });
+    if (!b2.empty()) {
+        // con due righe il titolo ha sotto il filetto dorato come l'aiuto (piu' alto di un quarto per non toccare le gambe)
+        badge.back().height = lineH + font / 4;
+        badge.back().rule = true;
+        badge.push_back({ { { b2, kWhite, pad, false } }, lineH });
+    }
     const int bw = (std::max)(TextWidth(b1, font, true), TextWidth(b2, font, false)) + pad * 2 + 4;
     g_badgePanel = BuildPanel(badge, bw, pad, font);
 
@@ -243,9 +385,13 @@ void BuildPanels(int bufferHeight)
     hw = (std::max)(hw, TextWidth(title, font, true) + pad * 2 + 4);
     hw = (std::max)(hw, TextWidth(foot, font, false) + pad * 2 + 4);
     std::vector<Line> help;
-    help.push_back({ { { title, kGold, pad, true } }, lineH * 3 / 2 });
+    Line head{ { { title, kGold, pad, true } }, lineH * 3 / 2 };
+    head.rule = true;
+    help.push_back(head);
     for (const auto& c : cells) {
         Line l{ {}, lineH };
+        l.hl = !c.empty() && !c[0].empty() && c[0][0] == static_cast<wchar_t>(0x25b6);   // riga scelta delle impostazioni
+        l.zebra = !l.hl;
         if (c.size() > 0) l.segs.push_back({ c[0], kGold, x1, true });
         if (c.size() > 1 && c2) l.segs.push_back({ c[1], kGrey, x2, false });
         if (c.size() > 2) l.segs.push_back({ c[2], kWhite, x3, false });
@@ -353,6 +499,20 @@ Rect Clip(Rect r, int w, int h)
 
 // --- Radiali (0.6.0; disegno in Radial.cpp) ----------------------------------------------------------------------
 std::vector<RadialItem> g_radItems;    // voci lette nel thread del gioco
+int g_itemsKind = 0;                   // 0.10.3: radiale delle voci in g_radItems
+GroupInfo g_selGroup;                  // 0.10.1: cosa c'e' nella selezione (radiale dei gruppi, per "assegna")
+
+// Contenuto di un gruppo in parole (0.10.1): "un eroe e 24 unita', salute 82%".
+std::wstring GroupText(const GroupInfo& g)
+{
+    const int others = g.count - g.heroes;
+    std::wstring t;
+    if (g.heroes == 0) t = TrF(g.count == 1 ? T_GrpUnit : T_GrpUnits, g.count);
+    else if (g.heroes == 1) t = others > 0 ? TrF(others == 1 ? T_GrpHeroUnit : T_GrpHeroUnits, others) : std::wstring(Tr(T_GrpHero));
+    else t = others > 0 ? TrF(T_GrpHeroesUnits, g.heroes, others) : TrF(T_GrpHeroes, g.heroes);
+    if (g.hp >= 0) t += TrF(T_GrpHealth, g.hp);
+    return t;
+}
 Panel    g_radialPanel;
 std::wstring g_radKey;                 // contenuto del pannello costruito (per ricostruirlo solo se cambia)
 
@@ -472,18 +632,86 @@ void ReadGame(const Surface& s, DWORD now, bool active, bool inMap)
             items.push_back(it);
         }
     }
+    // 0.10.0: radiale "crea truppe": i comandi della barra dell'edificio che addestrano o assoldano (nome "train..." o
+    // "hire...") con la classe dell'unita' nel parametro; icona e titolo come nel radiale dei comandi.
+    if (kind == 4) {
+        // 0.10.3: se la barra sparisce per un momento (dopo aver creato le truppe la selezione puo' cambiare) si tiene
+        // l'elenco di prima invece di scrivere "questo edificio non addestra truppe" (prova sul PC del 06/11/2026)
+        const std::vector<RadialItem> oldItems = g_itemsKind == 4 ? g_radItems : std::vector<RadialItem>();
+        const std::vector<std::string> oldClasses = g_spawnClasses;
+        const std::vector<std::wstring> oldTitles = g_spawnTitles;
+        g_spawnClasses.clear();
+        g_spawnTitles.clear();
+        const size_t n = (std::min)(g_barRects.size(), static_cast<size_t>(16));
+        for (size_t i = 0; i < n && !g_barEmpty; ++i) {
+            char name[72], cls[72], t[160];
+            if (testBar) { sprintf_s(name, "trainTest%d", static_cast<int>(i)); sprintf_s(cls, "Test%d", static_cast<int>(i)); }
+            else if (!GameCommandName(g_barIds[i], name, sizeof(name)) || !GameCommandParam(g_barIds[i], cls, sizeof(cls))) continue;
+            if (_strnicmp(name, "train", 5) != 0 && _strnicmp(name, "hire", 4) != 0) continue;
+            // 0.10.3: il parametro puo' avere dopo la virgola la tecnologia che serve ("ISlinger,Slings"): la classe e' prima
+            if (char* comma = strchr(cls, ',')) *comma = 0;
+            RadialItem it;
+            it.id = g_barIds[i];
+            if (testBar) {
+                wchar_t b[32];
+                swprintf_s(b, L"Truppa di prova %d", static_cast<int>(i + 1));
+                EnterCriticalSection(&g_lock);
+                it.title = i < g_testTitles.size() ? g_testTitles[i] : std::wstring(b);
+                LeaveCriticalSection(&g_lock);
+            }
+            else if (GameCommandTitle(it.id, t, sizeof(t))) it.title = Widen(t);
+            TakeIcon(s, g_barRects[i], it);
+            items.push_back(it);
+            g_spawnClasses.push_back(cls);
+            g_spawnTitles.push_back(it.title);
+        }
+        if (items.empty() && !oldItems.empty()) {
+            items = oldItems;
+            g_spawnClasses = oldClasses;
+            g_spawnTitles = oldTitles;
+        }
+        static size_t loggedCount = static_cast<size_t>(-1);
+        if (loggedCount != g_spawnClasses.size()) {
+            loggedCount = g_spawnClasses.size();
+            std::string list;
+            for (const std::string& c : g_spawnClasses) list += (list.empty() ? "" : ", ") + c;
+            Log("Radiale crea truppe: %u unita' (%s)", static_cast<unsigned>(g_spawnClasses.size()), list.c_str());
+        }
+    }
     int counts[10] = {};
     bool countsOk = false;
-    if (kind == 2) {
-        countsOk = GameGroupCounts(counts);
-        for (int i = 0; i < 10; ++i) {
+    if (kind == 3) {
+        std::vector<CheatEntry> cheats;
+        EnterCriticalSection(&g_lock);
+        cheats = g_cheatItems;
+        LeaveCriticalSection(&g_lock);
+        for (size_t i = 0; i < cheats.size(); ++i) {
             RadialItem it;
-            it.id = (i + 1) % 10;
-            it.count = counts[it.id];
+            it.id = static_cast<int>(i);
+            it.title = cheats[i].title;
+            it.label = cheats[i].label;
+            it.count = cheats[i].color;
+            it.cheatIcon = cheats[i].icon;
             items.push_back(it);
         }
     }
+    if (kind == 2) {
+        // 0.10.1: con quello che c'e' in ogni gruppo (eroi, salute) e nella selezione
+        GroupInfo info[11];
+        countsOk = GameGroupInfo(info);
+        for (int i = 0; i < 10; ++i) counts[i] = info[i].count;
+        for (int i = 0; i < 10; ++i) {
+            RadialItem it;
+            it.id = (i + 1) % 10;
+            it.count = info[it.id].count;
+            it.heroes = info[it.id].heroes;
+            it.hp = info[it.id].hp;
+            items.push_back(it);
+        }
+        g_selGroup = info[10];
+    }
     g_radItems = items;
+    g_itemsKind = kind;
     EnterCriticalSection(&g_lock);
     g_radCount = static_cast<int>(items.size());
     if (kind == 2) { memcpy(g_groupCounts, counts, sizeof(counts)); g_groupCountsOk = countsOk; }
@@ -627,7 +855,9 @@ int WINAPI HookSetDIBitsToDevice(HDC hdc, int xDest, int yDest, DWORD w, DWORD h
     radAssign = g_radAssign;
     radHint = g_radHint;
     LeaveCriticalSection(&g_lock);
-    if ((badgeOn || helpOn) && (version != g_builtVersion || s.h != g_builtHeight)) {
+    static float builtScale = 0;   // 0.10.0: anche la dimensione scelta cambia i pannelli
+    if ((badgeOn || helpOn) && (version != g_builtVersion || s.h != g_builtHeight || builtScale != g_cfg.uiScale)) {
+        builtScale = g_cfg.uiScale;
         BuildPanels(s.h);
         g_builtVersion = version;
         g_builtHeight = s.h;
@@ -648,7 +878,7 @@ int WINAPI HookSetDIBitsToDevice(HDC hdc, int xDest, int yDest, DWORD w, DWORD h
     if (!g_barRects.empty()) {
         const RECT& b0 = g_barRects[0];
         const int bh = b0.bottom - b0.top;
-        const int size = (std::max)(16, (std::min)(96, bh * 62 / 100));
+        const int size = (std::max)(16, (std::min)(120, static_cast<int>(bh * 62 / 100 * g_cfg.uiScale)));
         if (size != g_rtHintSize || style != g_rtHintStyle) {
             g_rtHint = BuildGlyph(style, 12, size);
             g_rtHintSize = size;
@@ -663,7 +893,7 @@ int WINAPI HookSetDIBitsToDevice(HDC hdc, int xDest, int yDest, DWORD w, DWORD h
     }
     if (nb) {
         const RECT& b0 = g_barRects[first];
-        const int size = (std::max)(12, (std::min)(64, static_cast<int>((b0.bottom - b0.top) * 42 / 100)));
+        const int size = (std::max)(12, (std::min)(80, static_cast<int>((b0.bottom - b0.top) * 42 / 100 * g_cfg.uiScale)));
         if (size != g_glyphSize || style != g_glyphStyle) BuildGlyphs(style, size);
         for (int i = 0; i < nb; ++i) {
             const RECT& b = g_barRects[first + i];
@@ -678,10 +908,24 @@ int WINAPI HookSetDIBitsToDevice(HDC hdc, int xDest, int yDest, DWORD w, DWORD h
     if (radKind && active && inMap) {
         if (radHi >= static_cast<int>(g_radItems.size())) radHi = -1;
         std::wstring key = std::to_wstring(radKind) + L"|" + std::to_wstring(radHi) + L"|" + (radAssign ? L"1" : L"0") + L"|" +
-                           radHint + L"|" + std::to_wstring(s.h) + L"|" + std::to_wstring(g_radItems.size());
-        for (const RadialItem& it : g_radItems) key += L"|" + std::to_wstring(it.id) + L":" + std::to_wstring(it.count) + L":" + it.title;
+                           radHint + L"|" + std::to_wstring(s.h) + L"|" + std::to_wstring(g_radItems.size()) + L"|" +
+                           std::to_wstring(static_cast<int>(g_cfg.uiScale * 100));
+        for (const RadialItem& it : g_radItems)
+            key += L"|" + std::to_wstring(it.id) + L":" + std::to_wstring(it.count) + L":" + std::to_wstring(it.cheatIcon) + L":" + it.title +
+                   L":" + std::to_wstring(it.heroes) + L":" + std::to_wstring(it.hp);
+        std::wstring detail;
+        if (radKind == 2) {
+            if (radAssign) detail = g_selGroup.count ? TrF(T_GrpSelection, GroupText(g_selGroup).c_str()) : std::wstring();
+            else if (radHi >= 0 && g_radItems[radHi].count) {
+                GroupInfo gi;
+                gi.count = g_radItems[radHi].count; gi.heroes = g_radItems[radHi].heroes; gi.hp = g_radItems[radHi].hp;
+                detail = GroupText(gi);
+            }
+            key += L"|" + detail;
+        }
         if (key != g_radKey) {
-            g_radialPanel = BuildRadial(radKind, g_radItems, radHi, radAssign, radHint, s.h);
+            // 0.10.0: dimensione scelta, al massimo quasi tutta l'altezza dello schermo
+            g_radialPanel = BuildRadial(radKind, g_radItems, radHi, radAssign, radHint, static_cast<int>(s.h * (std::min)(1.5f, g_cfg.uiScale)), detail);
             g_radKey = key;
             ++g_glyphBuilds;   // forza la copia completa
         }
@@ -705,7 +949,7 @@ int WINAPI HookSetDIBitsToDevice(HDC hdc, int xDest, int yDest, DWORD w, DWORD h
     // della finestra a quelle del buffer
     int cursorAt = -1;
     if (cursorOn && cliW > 0 && cliH > 0) {
-        const int size = (std::max)(16, s.h / 34);
+        const int size = (std::max)(16, static_cast<int>(s.h / 34 * g_cfg.uiScale));
         if (g_cursorPanel.w != size) g_cursorPanel = BuildCursor(size);
         const int bx = curX * s.w / cliW, by = curY * s.h / cliH;
         const Rect at = Clip({ bx - size / 22, by - size / 22, g_cursorPanel.w, g_cursorPanel.h }, s.w, s.h);
@@ -763,6 +1007,37 @@ int WINAPI HookSetDIBitsToDevice(HDC hdc, int xDest, int yDest, DWORD w, DWORD h
     g_drawnVersion.store(version);
 
     RunCommand(s.w, s.h);
+    // trucco scelto nel radiale (0.9.0): si mette in coda qui, nel thread del gioco, e la coda manda un comando alla volta
+    std::string cheatVerb;
+    int cheatValue = 0;
+    EnterCriticalSection(&g_lock);
+    cheatVerb.swap(g_cheatVerb);
+    cheatValue = g_cheatValue;
+    LeaveCriticalSection(&g_lock);
+    if (!cheatVerb.empty()) GameCheat(cheatVerb.c_str(), cheatValue);
+    // 0.10.0: truppa scelta nel radiale "crea truppe" e camera sul prossimo insediamento
+    int spawnIndex, spawnCount;
+    bool wantSettlement;
+    EnterCriticalSection(&g_lock);
+    spawnIndex = g_spawnIndex;
+    spawnCount = g_spawnCount;
+    wantSettlement = g_wantSettlement;
+    g_spawnIndex = -1;
+    g_wantSettlement = false;
+    LeaveCriticalSection(&g_lock);
+    std::wstring badgeTitle = L"ImperiumPad ";
+    badgeTitle += IMPERIUMPAD_VERSION_NUM;
+    if (spawnIndex >= 0 && spawnIndex < static_cast<int>(g_spawnClasses.size())) {
+        if (GameCheatSpawn(g_spawnClasses[spawnIndex].c_str(), spawnCount))
+            OverlayBadge(badgeTitle.c_str(), TrF(T_BadgeSpawned, g_spawnTitles[spawnIndex].c_str(), spawnCount).c_str(), 2500);
+        else OverlayBadge(badgeTitle.c_str(), Tr(T_SpawnNoBuilding), 3000);   // 0.10.3: niente selezionato (o classe strana)
+    }
+    if (wantSettlement) {
+        int index = 0, total = 0;
+        if (GameNextSettlement(index, total)) OverlayBadge(badgeTitle.c_str(), TrF(T_BadgeSettlement, index, total).c_str(), 2000);
+        else OverlayBadge(badgeTitle.c_str(), Tr(T_BadgeNoSettlement), 3000);
+    }
+    GameCheatTick();
     return result;
 }
 
@@ -864,6 +1139,40 @@ void OverlayRadial(int kind, int highlight, bool assign, const wchar_t* hint)
     LeaveCriticalSection(&g_lock);
 }
 
+void OverlayCheatItems(const std::vector<CheatEntry>& items)
+{
+    if (!g_lockReady) return;
+    EnterCriticalSection(&g_lock);
+    g_cheatItems = items;
+    LeaveCriticalSection(&g_lock);
+}
+
+void OverlaySpawn(int index, int count)
+{
+    if (!g_lockReady) return;
+    EnterCriticalSection(&g_lock);
+    g_spawnIndex = index;
+    g_spawnCount = count;
+    LeaveCriticalSection(&g_lock);
+}
+
+void OverlayNextSettlement()
+{
+    if (!g_lockReady) return;
+    EnterCriticalSection(&g_lock);
+    g_wantSettlement = true;
+    LeaveCriticalSection(&g_lock);
+}
+
+void OverlayCheat(const char* verb, int value)
+{
+    if (!g_lockReady || !verb) return;
+    EnterCriticalSection(&g_lock);
+    g_cheatVerb = verb;
+    g_cheatValue = value;
+    LeaveCriticalSection(&g_lock);
+}
+
 bool OverlayGroupCounts(int counts[10])
 {
     for (int i = 0; i < 10; ++i) counts[i] = 0;
@@ -894,6 +1203,14 @@ void OverlayBarCommand(int slot)
     LeaveCriticalSection(&g_lock);
 }
 
+void OverlayTestTitles(const std::vector<std::wstring>& titles)
+{
+    if (!g_lockReady) return;
+    EnterCriticalSection(&g_lock);
+    g_testTitles = titles;
+    LeaveCriticalSection(&g_lock);
+}
+
 void OverlayTestBar(const std::vector<RECT>* rects)
 {
     if (!g_lockReady) return;
@@ -918,7 +1235,7 @@ void OverlayTick(HWND hwnd)
     helpOn = g_helpOn;
     version = g_version;
     glyphs = g_padActive && g_padInMap;
-    command = g_cmdSlot >= 0;
+    command = g_cmdSlot >= 0 || !g_cheatVerb.empty() || g_spawnIndex >= 0 || g_wantSettlement;
     // nei menu con il pad attivo: copia saltata dalla lettura, oppure elenco mai letto o letto in mappa
     menuRead = g_padActive && !g_padInMap && (g_uiPending || !g_uiTick || !g_uiMenu);
     radial = g_radKind && g_padActive && g_padInMap;

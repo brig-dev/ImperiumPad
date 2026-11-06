@@ -15,7 +15,7 @@ constexpr COLORREF kWhite = RGB(240, 236, 224), kGold = RGB(232, 190, 92), kGrey
 constexpr COLORREF kBack = RGB(24, 18, 12);
 constexpr int      kBackAlpha = 200;   // 0..255
 
-HFONT MakeFont(int px, bool bold);           // Segoe UI con l'antialiasing
+HFONT MakeFont(int px, bool bold);           // Segoe UI (o il primo carattere con gli accenti, 0.10.1), antialiasing
 
 // Buffer del gioco passato a SetDIBitsToDevice
 enum class Fmt { None, Rgb565, Rgb555, Bgrx32 };
@@ -56,13 +56,18 @@ Panel FinishPanel(const std::vector<float>& acc, int S);   // premoltiplicato ->
 struct RadialItem {
     int id = 0;                        // comando (radiale 1) o numero del gruppo (radiale 2)
     std::wstring title;
-    int count = 0;
+    int count = 0;                     // radiale 3 (trucchi, 0.9.0): colore della scritta, 0 bianco, 1 oro, 2 cibo
+    std::wstring label;                // radiale 3: scritta corta dentro il disco (+1K, MAX...)
+    int cheatIcon = 0;                 // radiale 3: CheatIconId (0.9.1)
+    int heroes = 0, hp = -1;           // radiale 2 (0.10.1): eroi nel gruppo, salute media in % (-1 = non si sa)
     int iw = 0, ih = 0;
     std::vector<uint32_t> icon;        // 0xAARRGGBB
 };
 std::wstring Widen(const char* s);           // Windows-1252 -> UTF-16
 void TakeIcon(const Surface& s, const RECT& r, RadialItem& it);
-Panel BuildRadial(int kind, const std::vector<RadialItem>& items, int hi, bool assign, const std::wstring& hint, int bufH);
+// detail (0.10.1): riga sotto il titolo (radiale dei gruppi: cosa c'e' nel gruppo scelto o nella selezione da assegnare)
+Panel BuildRadial(int kind, const std::vector<RadialItem>& items, int hi, bool assign, const std::wstring& hint, int bufH,
+                  const std::wstring& detail = std::wstring());
 
 // Cursore disegnato (Cursor.cpp, 0.8.0)
 Panel BuildCursor(int height);

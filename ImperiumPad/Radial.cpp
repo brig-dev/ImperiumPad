@@ -152,9 +152,205 @@ void PutIcon(std::vector<float>& acc, int S, const RadialItem& it, float cx, flo
     }
 }
 
+// --- Icone del radiale dei trucchi (0.9.1) --------------------------------------------------------------------------
+// Disegnate con GDI in bianco su nero a quattro volte la dimensione (come i simboli del pad), ridotte a copertura; il nero
+// dentro una figura fa da taglio (fette del pane, occhi del teschio...). Colore e ombra si mettono quando si posa l'icona.
+namespace {
+
+void Poly(HDC dc, std::initializer_list<POINT> pts)
+{
+    std::vector<POINT> v(pts);
+    Polygon(dc, v.data(), static_cast<int>(v.size()));
+}
+
+std::vector<uint8_t> CheatIconMask(int icon, int size)
+{
+    Mask m;
+    if (size < 8 || !MaskOpen(m, size * 4)) return {};
+    const int S = m.S;
+    auto P = [S](float f) { return static_cast<int>(f * S); };
+    HDC dc = m.dc;
+    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(WHITE_BRUSH));
+    HGDIOBJ oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
+    HPEN black = CreatePen(PS_SOLID, (std::max)(2, S / 28), RGB(0, 0, 0));
+    HPEN white = CreatePen(PS_SOLID, (std::max)(2, S / 14), RGB(255, 255, 255));
+    auto cut = [&](int x0, int y0, int x1, int y1) {
+        SelectObject(dc, black); MoveToEx(dc, x0, y0, nullptr); LineTo(dc, x1, y1); SelectObject(dc, GetStockObject(NULL_PEN));
+    };
+    switch (icon) {
+    case CI_Coins:   // pila di tre monete viste di lato, ognuna col bordo nero
+        SelectObject(dc, black);
+        for (int k = 0; k < 3; ++k) Ellipse(dc, P(0.14f), P(0.52f - k * 0.16f), P(0.86f), P(0.84f - k * 0.16f));
+        SelectObject(dc, GetStockObject(NULL_PEN));
+        break;
+    case CI_Loaf:    // pagnotta con tre tagli
+        Ellipse(dc, P(0.08f), P(0.30f), P(0.92f), P(0.80f));
+        cut(P(0.30f), P(0.40f), P(0.40f), P(0.66f)); cut(P(0.47f), P(0.36f), P(0.57f), P(0.68f)); cut(P(0.64f), P(0.40f), P(0.74f), P(0.66f));
+        break;
+    case CI_House:   // casa: tetto e muro con la porta
+        Poly(dc, { { P(0.08f), P(0.50f) }, { P(0.50f), P(0.12f) }, { P(0.92f), P(0.50f) } });
+        Rectangle(dc, P(0.20f), P(0.48f), P(0.80f), P(0.88f));
+        SelectObject(dc, GetStockObject(BLACK_BRUSH)); Rectangle(dc, P(0.42f), P(0.62f), P(0.58f), P(0.88f)); SelectObject(dc, GetStockObject(WHITE_BRUSH));
+        break;
+    case CI_People:  // due persone, quella davanti col bordo
+        Ellipse(dc, P(0.18f), P(0.14f), P(0.42f), P(0.38f)); Ellipse(dc, P(0.06f), P(0.42f), P(0.54f), P(0.96f));
+        SelectObject(dc, black);
+        Ellipse(dc, P(0.50f), P(0.20f), P(0.76f), P(0.46f)); Ellipse(dc, P(0.36f), P(0.50f), P(0.90f), P(1.08f));
+        SelectObject(dc, GetStockObject(NULL_PEN));
+        SelectObject(dc, GetStockObject(BLACK_BRUSH)); Rectangle(dc, 0, P(0.88f), S, S); SelectObject(dc, GetStockObject(WHITE_BRUSH));
+        break;
+    case CI_Hammer:  // martello in diagonale
+        Poly(dc, { { P(0.20f), P(0.86f) }, { P(0.12f), P(0.78f) }, { P(0.56f), P(0.34f) }, { P(0.64f), P(0.42f) } });
+        Poly(dc, { { P(0.38f), P(0.30f) }, { P(0.58f), P(0.10f) }, { P(0.90f), P(0.42f) }, { P(0.70f), P(0.62f) } });
+        break;
+    case CI_Flag:
+    case CI_WhiteFlag:   // asta e bandiera mossa
+        Rectangle(dc, P(0.16f), P(0.08f), P(0.24f), P(0.94f));
+        Poly(dc, { { P(0.24f), P(0.12f) }, { P(0.50f), P(0.20f) }, { P(0.88f), P(0.12f) }, { P(0.88f), P(0.52f) }, { P(0.50f), P(0.60f) }, { P(0.24f), P(0.52f) } });
+        break;
+    case CI_Heart:
+        Ellipse(dc, P(0.08f), P(0.16f), P(0.54f), P(0.60f)); Ellipse(dc, P(0.46f), P(0.16f), P(0.92f), P(0.60f));
+        Poly(dc, { { P(0.10f), P(0.46f) }, { P(0.90f), P(0.46f) }, { P(0.50f), P(0.90f) } });
+        break;
+    case CI_Star: {  // stella a cinque punte
+        POINT pts[10];
+        for (int i = 0; i < 10; ++i) {
+            const float a = -1.5707963f + i * 0.6283185f, r = (i % 2 ? 0.20f : 0.46f);
+            pts[i] = { P(0.5f + r * std::cos(a)), P(0.54f + r * std::sin(a)) };
+        }
+        Polygon(dc, pts, 10);
+        break;
+    }
+    case CI_Skull:   // cranio, mascella, occhi, naso e denti neri
+        Ellipse(dc, P(0.16f), P(0.08f), P(0.84f), P(0.70f)); Rectangle(dc, P(0.30f), P(0.56f), P(0.70f), P(0.88f));
+        SelectObject(dc, GetStockObject(BLACK_BRUSH));
+        Ellipse(dc, P(0.27f), P(0.34f), P(0.45f), P(0.52f)); Ellipse(dc, P(0.55f), P(0.34f), P(0.73f), P(0.52f));
+        Poly(dc, { { P(0.50f), P(0.55f) }, { P(0.44f), P(0.65f) }, { P(0.56f), P(0.65f) } });
+        SelectObject(dc, GetStockObject(WHITE_BRUSH));
+        cut(P(0.42f), P(0.74f), P(0.42f), P(0.88f)); cut(P(0.50f), P(0.74f), P(0.50f), P(0.88f)); cut(P(0.58f), P(0.74f), P(0.58f), P(0.88f));
+        break;
+    case CI_Map:     // mappa piegata in tre, con un percorso
+        Poly(dc, { { P(0.08f), P(0.22f) }, { P(0.36f), P(0.14f) }, { P(0.64f), P(0.22f) }, { P(0.92f), P(0.14f) },
+                   { P(0.92f), P(0.78f) }, { P(0.64f), P(0.86f) }, { P(0.36f), P(0.78f) }, { P(0.08f), P(0.86f) } });
+        cut(P(0.36f), P(0.14f), P(0.36f), P(0.78f)); cut(P(0.64f), P(0.22f), P(0.64f), P(0.86f));
+        cut(P(0.18f), P(0.66f), P(0.30f), P(0.44f)); cut(P(0.30f), P(0.44f), P(0.50f), P(0.56f)); cut(P(0.50f), P(0.56f), P(0.78f), P(0.32f));
+        break;
+    case CI_Eye:     // occhio: mandorla bianca, iride nera, pupilla bianca
+        Ellipse(dc, P(0.04f), P(0.28f), P(0.96f), P(0.74f));
+        SelectObject(dc, GetStockObject(BLACK_BRUSH)); Ellipse(dc, P(0.32f), P(0.30f), P(0.68f), P(0.72f));
+        SelectObject(dc, GetStockObject(WHITE_BRUSH)); Ellipse(dc, P(0.44f), P(0.42f), P(0.56f), P(0.54f));
+        break;
+    case CI_Swords: {   // due spade incrociate con l'elsa
+        for (int k = 0; k < 2; ++k) {
+            const float s = k ? -1.0f : 1.0f;   // diagonale e controdiagonale
+            auto X = [&](float u) { return k ? 1.0f - u : u; };
+            Poly(dc, { { P(X(0.14f)), P(0.10f) }, { P(X(0.22f)), P(0.08f) }, { P(X(0.78f)), P(0.64f) }, { P(X(0.70f)), P(0.72f) } });
+            Poly(dc, { { P(X(0.62f)), P(0.80f) }, { P(X(0.80f)), P(0.62f) }, { P(X(0.86f)), P(0.68f) }, { P(X(0.68f)), P(0.86f) } });
+            Ellipse(dc, P(X(0.78f)) - P(0.06f), P(0.78f), P(X(0.78f)) + P(0.06f), P(0.90f));
+            (void)s;
+        }
+        break;
+    }
+    case CI_Shield:  // scudo con la croce (0.10.1, quasi invincibili)
+        Poly(dc, { { P(0.16f), P(0.10f) }, { P(0.84f), P(0.10f) }, { P(0.82f), P(0.50f) }, { P(0.50f), P(0.92f) }, { P(0.18f), P(0.50f) } });
+        cut(P(0.50f), P(0.18f), P(0.50f), P(0.78f));
+        cut(P(0.26f), P(0.40f), P(0.74f), P(0.40f));
+        break;
+    case CI_Hourglass:   // clessidra (0.10.1, velocita' x10)
+        Poly(dc, { { P(0.16f), P(0.06f) }, { P(0.84f), P(0.06f) }, { P(0.84f), P(0.14f) }, { P(0.16f), P(0.14f) } });
+        Poly(dc, { { P(0.16f), P(0.86f) }, { P(0.84f), P(0.86f) }, { P(0.84f), P(0.94f) }, { P(0.16f), P(0.94f) } });
+        Poly(dc, { { P(0.24f), P(0.14f) }, { P(0.76f), P(0.14f) }, { P(0.54f), P(0.50f) }, { P(0.76f), P(0.86f) }, { P(0.24f), P(0.86f) }, { P(0.46f), P(0.50f) } });
+        cut(P(0.34f), P(0.24f), P(0.66f), P(0.24f));
+        break;
+    case CI_Cloud:   // nuvola (0.10.1, nebbia di guerra)
+        Ellipse(dc, P(0.06f), P(0.42f), P(0.44f), P(0.80f));
+        Ellipse(dc, P(0.26f), P(0.22f), P(0.72f), P(0.68f));
+        Ellipse(dc, P(0.54f), P(0.38f), P(0.94f), P(0.78f));
+        Poly(dc, { { P(0.24f), P(0.58f) }, { P(0.76f), P(0.58f) }, { P(0.76f), P(0.80f) }, { P(0.24f), P(0.80f) } });
+        break;
+    case CI_Book:    // libro aperto con le righe
+        Poly(dc, { { P(0.06f), P(0.22f) }, { P(0.46f), P(0.28f) }, { P(0.46f), P(0.86f) }, { P(0.06f), P(0.80f) } });
+        Poly(dc, { { P(0.54f), P(0.28f) }, { P(0.94f), P(0.22f) }, { P(0.94f), P(0.80f) }, { P(0.54f), P(0.86f) } });
+        for (int k = 0; k < 3; ++k) { cut(P(0.14f), P(0.40f + k * 0.13f), P(0.38f), P(0.43f + k * 0.13f)); cut(P(0.62f), P(0.43f + k * 0.13f), P(0.86f), P(0.40f + k * 0.13f)); }
+        break;
+    default:
+        break;
+    }
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(black);
+    DeleteObject(white);
+    std::vector<uint8_t> cov = MaskTake(m, size);
+    MaskClose(m);
+    return cov;
+}
+
+COLORREF CheatIconColor(int icon)
+{
+    switch (icon) {
+    case CI_Coins: case CI_Star: return RGB(244, 204, 92);
+    case CI_Loaf: return RGB(226, 178, 108);
+    case CI_House: case CI_People: return RGB(214, 204, 184);
+    case CI_Hammer: case CI_Swords: case CI_Shield: return RGB(196, 198, 210);
+    case CI_Hourglass: return RGB(244, 204, 92);
+    case CI_Cloud: return RGB(204, 210, 222);
+    case CI_Flag: return RGB(222, 76, 62);
+    case CI_WhiteFlag: return RGB(244, 242, 236);
+    case CI_Heart: return RGB(232, 74, 86);
+    case CI_Skull: return RGB(238, 232, 218);
+    case CI_Map: return RGB(220, 196, 146);
+    case CI_Eye: return RGB(132, 184, 244);
+    case CI_Book: return RGB(206, 166, 116);
+    default: return RGB(240, 236, 224);
+    }
+}
+
+// Bordo del disco secondo la categoria della voce.
+COLORREF CheatRim(int color)
+{
+    switch (color) {
+    case 1: return RGB(232, 190, 92);
+    case 2: return RGB(124, 192, 92);
+    case 3: return RGB(212, 86, 72);
+    case 4: return RGB(104, 156, 232);
+    default: return RGB(160, 128, 72);
+    }
+}
+
+} // namespace
+
 // Radiale (0.6.1, ridisegnato): fondo con una sfumatura dal centro, doppia cornice dorata, spicchio luminoso verso la
 // voce scelta, voce scelta piu' grande e con un alone, icone ingrandite con cornice, disco centrale per il titolo.
-Panel BuildRadial(int kind, const std::vector<RadialItem>& items, int hi, bool assign, const std::wstring& hint, int bufH)
+// Arco intorno a un disco (0.10.1, salute del gruppo): da mezzogiorno in senso orario per frac del giro, tra rIn e rOut.
+void Arc(std::vector<float>& acc, int S, float cx, float cy, float rIn, float rOut, float frac, COLORREF col, float alpha)
+{
+    if (frac <= 0) return;
+    const int x0 = (std::max)(0, static_cast<int>(cx - rOut - 1)), x1 = (std::min)(S - 1, static_cast<int>(cx + rOut + 1));
+    const int y0 = (std::max)(0, static_cast<int>(cy - rOut - 1)), y1 = (std::min)(S - 1, static_cast<int>(cy + rOut + 1));
+    const float lim = (std::min)(1.0f, frac) * 6.2831853f;
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x) {
+            const float dx = x + 0.5f - cx, dy = y + 0.5f - cy, d = std::sqrt(dx * dx + dy * dy);
+            float cov = (std::min)(d - rIn + 0.5f, rOut - d + 0.5f);
+            if (cov <= 0) continue;
+            float a = std::atan2(dx, -dy);
+            if (a < 0) a += 6.2831853f;
+            if (a > lim) continue;
+            Put(acc, S, x, y, col, (cov > 1 ? 1 : cov) * alpha);
+        }
+}
+
+// Colore della salute (0.10.1): verde, oro, rosso; bronzo se non si sa.
+COLORREF HealthColor(int hp)
+{
+    if (hp < 0) return RGB(160, 128, 72);
+    if (hp >= 67) return RGB(124, 200, 92);
+    if (hp >= 34) return RGB(236, 192, 88);
+    return RGB(220, 84, 70);
+}
+
+Panel BuildRadial(int kind, const std::vector<RadialItem>& items, int hi, bool assign, const std::wstring& hint, int bufH,
+                  const std::wstring& detail)
 {
     const int S = (std::max)(240, bufH * 62 / 100);
     const float c = S / 2.0f, rOut = S / 2.0f - 3, ring = S * 0.355f, ri = S * 0.07f;
@@ -194,8 +390,49 @@ Panel BuildRadial(int kind, const std::vector<RadialItem>& items, int hi, bool a
         if (sel) Glow(acc, S, x, y, r, ri * 0.45f, kHalo, 0.55f);
         Disc(acc, S, x, y, r + 2, 0, RGB(8, 6, 4), 0.6f);                                   // ombra
         Disc(acc, S, x, y, r, 0, sel ? RGB(92, 66, 24) : RGB(30, 23, 14), empty && !sel ? 0.7f : 0.97f);
-        Disc(acc, S, x, y, r, sel ? 3.5f : 2.0f, sel ? RGB(255, 214, 120) : (empty ? RGB(96, 82, 60) : RGB(160, 128, 72)), 1.0f);
-        if (kind == 1) PutIcon(acc, S, items[i], x, y, static_cast<int>(r * 1.3f));
+        COLORREF rim = kind == 3 ? CheatRim(items[i].count) : (empty ? RGB(96, 82, 60) : RGB(160, 128, 72));
+        if (kind == 2 && !empty) rim = HealthColor(items[i].hp);
+        Disc(acc, S, x, y, r, sel ? 3.5f : (kind == 3 || kind == 2 ? 2.5f : 2.0f), sel ? RGB(255, 214, 120) : rim, 1.0f);
+        if (kind == 2 && !empty && items[i].hp >= 0) {
+            // 0.10.1: salute del gruppo come arco fuori dal disco (fondo scuro, poi la parte piena nel colore della salute)
+            const float a0 = r + 3.0f, a1 = r + 3.0f + (std::max)(3.0f, ri * 0.11f);
+            Arc(acc, S, x, y, a0, a1, 1.0f, RGB(20, 14, 8), 0.75f);
+            Arc(acc, S, x, y, a0, a1, items[i].hp / 100.0f, HealthColor(items[i].hp), 1.0f);
+        }
+        if (kind == 2 && items[i].heroes > 0) {
+            // 0.10.1: stella dorata in alto a destra se nel gruppo c'e' un eroe
+            const int isz = (std::max)(10, static_cast<int>(r * 0.62f));
+            const std::vector<uint8_t> cov = CheatIconMask(CI_Star, isz);
+            const int ox = static_cast<int>(x + r * 0.70f) - isz / 2, oy = static_cast<int>(y - r * 0.70f) - isz / 2;
+            Disc(acc, S, ox + isz / 2.0f, oy + isz / 2.0f, isz * 0.58f, 0, RGB(30, 22, 10), 0.95f);
+            Disc(acc, S, ox + isz / 2.0f, oy + isz / 2.0f, isz * 0.58f, 1.5f, RGB(212, 172, 86), 1.0f);
+            for (int yy = 0; yy < isz && !cov.empty(); ++yy)
+                for (int xx = 0; xx < isz; ++xx) {
+                    const uint8_t c = cov[static_cast<size_t>(yy) * isz + xx];
+                    if (c) Put(acc, S, ox + xx, oy + yy, RGB(250, 210, 96), c / 255.0f);
+                }
+        }
+        if (kind == 1 || kind == 4) PutIcon(acc, S, items[i], x, y, static_cast<int>(r * 1.3f));
+        if (kind == 3 && items[i].cheatIcon) {
+            // icona dei trucchi (0.9.1): piu' in alto se sotto c'e' la quantita', con un'ombra
+            const int isz = static_cast<int>(r * (items[i].label.empty() ? 1.15f : 0.95f));
+            const std::vector<uint8_t> cov = CheatIconMask(items[i].cheatIcon, isz);
+            if (!cov.empty()) {
+                const int ox = static_cast<int>(x) - isz / 2;
+                const int oy = static_cast<int>(y - (items[i].label.empty() ? 0.0f : r * 0.22f)) - isz / 2;
+                const COLORREF ic = CheatIconColor(items[i].cheatIcon);
+                for (int yy = 0; yy < isz; ++yy)
+                    for (int xx = 0; xx < isz; ++xx) {
+                        const uint8_t c = cov[static_cast<size_t>(yy) * isz + xx];
+                        if (c) Put(acc, S, ox + xx + 2, oy + yy + 2, RGB(0, 0, 0), c / 255.0f * 0.55f);
+                    }
+                for (int yy = 0; yy < isz; ++yy)
+                    for (int xx = 0; xx < isz; ++xx) {
+                        const uint8_t c = cov[static_cast<size_t>(yy) * isz + xx];
+                        if (c) Put(acc, S, ox + xx, oy + yy, ic, c / 255.0f);
+                    }
+            }
+        }
     }
 
     // testi: bianco = normale, rosso puro = dorato, verde puro = grigio (poi si ricolorano)
@@ -204,10 +441,14 @@ Panel BuildRadial(int kind, const std::vector<RadialItem>& items, int hi, bool a
         const int titlePx = (std::max)(15, bufH / 32), smallPx = (std::max)(11, bufH / 60), digitPx = static_cast<int>(ri * 1.05f);
         HFONT title = MakeFont(titlePx, true), small = MakeFont(smallPx, false), digit = MakeFont(digitPx, true), digitBig = MakeFont(digitPx * 6 / 5, true);
         std::wstring head;
-        if (kind == 1) {
-            if (n == 0) head = Tr(T_RadNoCommands);
-            else if (hi < 0) head = Tr(T_RadTiltCommand);
+        if (kind == 1 || kind == 4) {   // 4 = crea truppe (0.10.0): come i comandi, con altri testi
+            if (n == 0) head = Tr(kind == 4 ? T_SpawnNone : T_RadNoCommands);
+            else if (hi < 0) head = Tr(kind == 4 ? T_SpawnTilt : T_RadTiltCommand);
             else head = items[hi].title.empty() ? Tr(T_RadUnnamed) : items[hi].title;
+        }
+        else if (kind == 3) {   // trucchi (0.9.0)
+            if (hi < 0 || hi >= n) head = Tr(T_RadTiltCheat);
+            else head = items[hi].title;
         }
         else {
             // 0.8.4: con tutti i gruppi vuoti si dice che non ce ne sono (la riga sotto spiega come crearli)
@@ -230,15 +471,26 @@ Panel BuildRadial(int kind, const std::vector<RadialItem>& items, int hi, bool a
         SelectObject(m.dc, small);
         RECT t2 = tr; t2.bottom = S;
         DrawTextW(m.dc, hint.c_str(), -1, &t2, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
-        const int h1 = t1.bottom - t1.top, h2 = t2.bottom - t2.top, gap = smallPx;
-        const int top = static_cast<int>(c) - (h1 + gap + h2) / 2;
+        HFONT det = MakeFont((std::max)(12, smallPx * 6 / 5), false);
+        SelectObject(m.dc, det);
+        RECT t3 = tr; t3.bottom = S;
+        if (!detail.empty()) DrawTextW(m.dc, detail.c_str(), -1, &t3, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+        const int h1 = t1.bottom - t1.top, h2 = t2.bottom - t2.top, h3 = detail.empty() ? 0 : t3.bottom - t3.top, gap = smallPx;
+        const int g3 = detail.empty() ? 0 : gap / 2;
+        const int top = static_cast<int>(c) - (h1 + g3 + h3 + gap + h2) / 2;
         SelectObject(m.dc, title);
         SetTextColor(m.dc, RGB(255, 0, 0));
         RECT d1{ tr.left, top, tr.right, top + h1 };
         DrawTextW(m.dc, head.c_str(), -1, &d1, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+        if (!detail.empty()) {   // 0.10.1: cosa c'e' nel gruppo, in bianco sotto il titolo
+            SelectObject(m.dc, det);
+            SetTextColor(m.dc, RGB(255, 255, 255));
+            RECT d3{ tr.left, top + h1 + g3, tr.right, top + h1 + g3 + h3 };
+            DrawTextW(m.dc, detail.c_str(), -1, &d3, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+        }
         SelectObject(m.dc, small);
         SetTextColor(m.dc, RGB(0, 255, 0));
-        RECT d2{ tr.left, top + h1 + gap, tr.right, top + h1 + gap + h2 };
+        RECT d2{ tr.left, top + h1 + g3 + h3 + gap, tr.right, top + h1 + g3 + h3 + gap + h2 };
         DrawTextW(m.dc, hint.c_str(), -1, &d2, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
         if (kind == 2) {
             for (int i = 0; i < n; ++i) {
@@ -258,11 +510,29 @@ Panel BuildRadial(int kind, const std::vector<RadialItem>& items, int hi, bool a
                 DrawTextW(m.dc, cnt, -1, &cr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             }
         }
+        if (kind == 3) {
+            // scritta corta nel disco; il colore passa dai canali della maschera: rosso = oro, blu = verde del cibo
+            HFONT lab = MakeFont((std::max)(9, static_cast<int>(ri * 0.40f)), true);
+            SelectObject(m.dc, lab);
+            for (int i = 0; i < n; ++i) {
+                if (items[i].label.empty()) continue;
+                const float r = i == hi ? ri * 1.18f : ri;
+                SetTextColor(m.dc, items[i].count == 1 ? RGB(255, 0, 0) : items[i].count == 2 ? RGB(0, 0, 255) : RGB(255, 255, 255));
+                // sotto l'icona (0.9.1; senza icona al centro del disco)
+                const LONG top = items[i].cheatIcon ? at[i].y + static_cast<LONG>(r * 0.28f) : at[i].y - static_cast<LONG>(r);
+                RECT lr{ at[i].x - static_cast<LONG>(r), top, at[i].x + static_cast<LONG>(r),
+                         items[i].cheatIcon ? at[i].y + static_cast<LONG>(r * 0.86f) : at[i].y + static_cast<LONG>(r) };
+                DrawTextW(m.dc, items[i].label.c_str(), -1, &lr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            }
+            SelectObject(m.dc, small);
+            DeleteObject(lab);
+        }
         SelectObject(m.dc, old);
         DeleteObject(title);
         DeleteObject(small);
         DeleteObject(digit);
         DeleteObject(digitBig);
+        DeleteObject(det);
         GdiFlush();
         for (int y = 0; y < S; ++y)
             for (int x = 0; x < S; ++x) {
@@ -273,6 +543,7 @@ Panel BuildRadial(int kind, const std::vector<RadialItem>& items, int hi, bool a
                 int ink = (std::max)(r, (std::max)(g, b));
                 if (!g && !b) col = RGB(240, 200, 104);            // dorato
                 else if (!r && !b) col = RGB(176, 168, 150);       // grigio
+                else if (!r && !g) col = RGB(140, 212, 110);       // verde (cibo, radiale dei trucchi)
                 Put(acc, S, x + 1, y + 1, RGB(0, 0, 0), ink / 255.0f * 0.7f);   // ombra del testo
                 Put(acc, S, x, y, col, ink / 255.0f);
             }

@@ -36,9 +36,13 @@ bool CtrlActive()
     return until && static_cast<int>(until - GetTickCount()) > 0;
 }
 
+std::atomic<DWORD> g_noShiftUntil{ 0 };   // 0.10.0: Maiusc virtuale spento per poco (LT + croce = tasti di selezione)
+
 bool ShiftActive()
 {
     if (CtrlActive()) return false;
+    const DWORD quiet = g_noShiftUntil.load();
+    if (quiet && static_cast<int>(quiet - GetTickCount()) > 0) return false;
     if (g_shiftHeld.load()) return true;
     const DWORD until = g_shiftUntil.load();
     return until && static_cast<int>(until - GetTickCount()) > 0;
@@ -129,6 +133,13 @@ void InputShiftPulse(DWORD ms)
     DWORD until = GetTickCount() + ms;
     if (!until) until = 1;
     g_shiftUntil.store(until);
+}
+
+void InputShiftSuppress(DWORD ms)
+{
+    DWORD until = GetTickCount() + ms;
+    if (!until) until = 1;
+    g_noShiftUntil.store(until);
 }
 
 void InputCtrlPulse(DWORD ms)

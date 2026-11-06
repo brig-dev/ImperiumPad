@@ -29,6 +29,8 @@ std::atomic<int>  g_vx{ 0 }, g_vy{ 0 };   // velocita' della camera, -10000..100
 std::atomic<bool> g_want{ false };
 std::atomic<int>  g_cursorX{ -1 }, g_cursorY{ -1 };   // cursore in coordinate del buffer del gioco (-1 = nessuno)
 std::atomic<bool> g_slowWant{ false };
+std::atomic<int>  g_speedStep{ 0 };     // 0.10.0: +1 / -1 = velocita' della partita su o giu'
+std::atomic<int>  g_speedResult{ 0 };   // velocita' dopo il passo (0 = nulla di nuovo, -1 = in rete)
 // risultati per il thread del pad
 std::atomic<bool> g_hover{ false };
 std::atomic<int>  g_heroHandle{ -1 }, g_heroPct{ -1 };
@@ -106,7 +108,24 @@ void Look(DWORD now)
     // tempo rallentato con un radiale aperto (solo in partita singola; mai in rete)
     int speed = 0;
     bool multi = false;
-    const bool haveSpeed = GameSpeed(speed, multi);
+    bool haveSpeed = GameSpeed(speed, multi);
+    // velocita' della partita scelta col pad (0.10.0, View + croce su/giu'): passi di un quarto, da 250 a 4000 (1000 =
+    // normale per il gioco), solo in singolo e mai a radiale aperto
+    // 0.10.1: step 10 = trucco classico "velocita' 10x" (10000, o di nuovo 1000 se e' gia' 10x). Si aspetta che il tempo
+    // rallentato sia finito (il trucco si sceglie dal radiale): prima si leggerebbe la velocita' rallentata
+    const int step = g_slowed ? 0 : g_speedStep.exchange(0);
+    if (step && inMap && haveSpeed) {
+        if (multi) g_speedResult.store(-1);
+        else {
+            int next = step == 10 ? (speed >= 10000 ? 1000 : 10000) : step > 0 ? speed * 5 / 4 : speed * 4 / 5;
+            if (step != 10) next = (std::max)(250, (std::min)(4000, next));
+            if (GameSetSpeed(next)) {
+                Log("Velocita' della partita: da %d a %d", speed, next);
+                speed = next;
+            }
+            g_speedResult.store(speed);
+        }
+    }
     const bool want = g_slowWant.load() && g_cfg.slowMotion > 0.0f && g_cfg.slowMotion < 1.0f && inMap && haveSpeed && !multi;
     if (g_slowed && gs.game != g_slowGame) {   // partita finita o cambiata: niente da rimettere
         g_slowed = false;
@@ -182,3 +201,5 @@ int TickHeroHealth(int& handle)
 }
 
 void TickSlowMotion(bool on) { g_slowWant.store(on); }
+void TickSpeedStep(int dir) { g_speedStep.store(dir == 10 ? 10 : dir > 0 ? 1 : -1); }
+int  TickSpeedResult() { return g_speedResult.exchange(0); }

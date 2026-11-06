@@ -79,6 +79,33 @@ WORD RemapButtons(WORD buttons)
     return out;
 }
 
+// Tasti riassegnati dal gioco (0.10.0): pagina delle impostazioni. i e target sono posizioni in kButtons; target == i
+// toglie la riassegnazione. Si scrive subito in [Buttons].
+int ButtonCount() { return static_cast<int>(sizeof(kButtons) / sizeof(kButtons[0])); }
+const char* ButtonId(int i) { return i >= 0 && i < ButtonCount() ? kButtons[i].name : ""; }
+WORD ButtonMaskAt(int i) { return i >= 0 && i < ButtonCount() ? kButtons[i].mask : 0; }
+
+int ButtonTarget(int i)
+{
+    const int bit = BitOf(ButtonMaskAt(i));
+    if (bit < 0) return i;
+    const WORD to = g_cfg.remap[bit] ? g_cfg.remap[bit] : static_cast<WORD>(1u << bit);
+    for (int k = 0; k < ButtonCount(); ++k) if (kButtons[k].mask == to) return k;
+    return i;
+}
+
+void SetButtonTarget(int i, int target)
+{
+    const int bit = BitOf(ButtonMaskAt(i));
+    if (bit < 0 || target < 0 || target >= ButtonCount()) return;
+    g_cfg.remap[bit] = kButtons[target].mask;
+    bool any = false;
+    for (int k = 0; k < 16; ++k) if (g_cfg.remap[k] && g_cfg.remap[k] != static_cast<WORD>(1u << k)) any = true;
+    g_cfg.remapOn = any;
+    ConfigWrite("Buttons", kButtons[i].name, target == i ? nullptr : kButtons[target].name);   // nullptr toglie la voce
+    Log("Tasto riassegnato nel gioco: %s fa %s", kButtons[i].name, kButtons[target].name);
+}
+
 const char* GlyphStyleName(GlyphStyle s)
 {
     switch (s) {
@@ -116,6 +143,9 @@ void LoadConfig()
     char barSymbols[16];
     GetPrivateProfileStringA("Pad", "BarSymbols", "Hold", barSymbols, sizeof(barSymbols), g_ini);
     c.barSymbolsAlways = _stricmp(barSymbols, "Always") == 0;
+    c.uiScale         = ReadFloat("Pad", "UiScale", c.uiScale);
+    if (c.uiScale < 0.6f) c.uiScale = 0.6f;
+    if (c.uiScale > 2.0f) c.uiScale = 2.0f;
     c.controllerIndex = ReadInt("Pad", "ControllerIndex", c.controllerIndex);
     c.tickMs          = ReadInt("Pad", "TickMs", c.tickMs);
     c.leftDeadzone    = ReadFloat("Pad", "LeftDeadzone", c.leftDeadzone);

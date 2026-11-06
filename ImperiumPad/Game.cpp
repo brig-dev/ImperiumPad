@@ -6,6 +6,7 @@
 
 #include "ImperiumPad.h"
 #include <cstring>
+#include <cwchar>
 #include <utility>
 #include <vector>
 
@@ -271,6 +272,305 @@ int GameEmptyMenuButtons(RECT* rects, int* ids, int max)
     return n;
 }
 
+// --- Trucchi di Imperivm Resurrected (0.9.0) -------------------------------------------------------------------------
+// Il gioco non ha trucchi suoi. Resurrected 1.0.3 li offre in chat (/gold, /level...) e li manda a tutti come comando di
+// chat del gioco con il testo "#CHEAT:verbo:valore:x,y"; ogni macchina lo riconosce (CheatsHandleCommand), controlla che
+// la stanza li permetta ("Allow cheats") e lo esegue come script del gioco, quindi resta sincronizzato anche in rete.
+// ImperiumPad mette in coda lo stesso comando, con codice suo: 0x4e9570 crea il messaggio di chat (40 byte, stringa a
+// +0xc: testo a +4 della stringa, lunghezza +0x14, capacita' +0x18), 0x401ec0 le assegna il testo (thiscall, testo,
+// lunghezza), il metodo 3 gli da' il giocatore locale [partita+0x12c8], 0x51d3c0 lo mette nella coda della partita
+// (thiscall, ECX = partita) [R: QueueCheat in cheats.cpp]. Riferimento: la posizione (+0x24, +0x28) del primo oggetto
+// selezionato, dalla tabella degli handle 0xa2a610 [R]. Sulle unita' selezionate: "#CHEAT:s<lettera>:<valore>:<handle>"
+// (h cura, f viveri, l livello, k elimina), fino a 15 handle per comando, 3 caratteri ciascuno; Resurrected accetta solo
+// testi fino a 64 caratteri. Tutto nel thread del gioco: la coda manda un comando ogni 130 ms, come fa Resurrected.
+namespace {
+
+constexpr uintptr_t kCmdChatCreate = 0x4e9570;
+constexpr uintptr_t kStringAssign  = 0x401ec0;
+constexpr uintptr_t kQueueCommand  = 0x51d3c0;
+constexpr uintptr_t kHandleTable   = 0xa2a610;
+
+std::vector<std::string> g_cheatQueue;
+DWORD g_cheatLast = 0;
+
+bool SendCheat(const std::string& text)
+{
+    if (text.size() > 64) return false;
+    __try {
+        const uint32_t game = U32(kGame);
+        const uint32_t player = game ? U32(game + 0x12c8) : 0;
+        if (!player) return false;
+        using Create_t = uint32_t(__cdecl*)();
+        using Assign_t = void(__fastcall*)(uint32_t self, uint32_t edx, const char* text, unsigned len);
+        using This_t = void(__fastcall*)(uint32_t self, uint32_t edx, uint32_t arg);
+        const uint32_t cmd = reinterpret_cast<Create_t>(kCmdChatCreate)();
+        if (!cmd) return false;
+        reinterpret_cast<Assign_t>(kStringAssign)(cmd + 0xc, 0, text.c_str(), static_cast<unsigned>(text.size()));
+        reinterpret_cast<This_t>(U32(U32(cmd) + 3 * 4))(cmd, 0, player);
+        reinterpret_cast<This_t>(kQueueCommand)(game, 0, cmd);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Oggetti selezionati: handle e posizione del primo (lista a +0xf0+0x18, nodo +8 = handle).
+int ReadSelection(std::vector<uint16_t>& handles, int& x, int& y)
+{
+    handles.clear();
+    x = y = -1;
+    __try {
+        const uint32_t sel = U32(kSelManager);
+        if (!sel) return 0;
+        const uint32_t head = U32(sel + 0xf0 + 0x18);
+        const int count = static_cast<int>(U32(sel + 0xf0 + 0x1c));
+        if (!head || count <= 0 || count > 2000) return 0;
+        uint32_t node = U32(head);
+        for (int guard = 0; node && node != head && guard < count + 8 && handles.size() < 300; ++guard) {
+            const uint16_t h = *reinterpret_cast<const uint16_t*>(node + 8);
+            const uint32_t obj = U32(kHandleTable + h * 4u);
+            if (obj) {
+                const int ox = static_cast<int>(U32(obj + 0x24)), oy = static_cast<int>(U32(obj + 0x28));
+                if (ox >= 0 && oy >= 0 && ox < 4000000 && oy < 4000000) {
+                    if (x < 0) { x = ox; y = oy; }
+                    handles.push_back(h);
+                }
+            }
+            node = U32(node);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        handles.clear();
+    }
+    return static_cast<int>(handles.size());
+}
+
+// Script del gioco eseguito subito, solo su questa macchina (0.10.1): metodo +0xa8 della partita (thiscall, testo), lo
+// stesso con cui ogni macchina esegue i trucchi di Resurrected [R: RunScript in cheats.cpp]. Non passa dalla coda dei
+// comandi, quindi in rete la partita si desincronizzerebbe: mai con la partita multigiocatore (vtable 0x7c2858).
+bool RunScript(const std::string& text)
+{
+    __try {
+        const uint32_t game = U32(kGame);
+        if (!game || U32(game) == 0x7c2858) return false;
+        using Run_t = void(__fastcall*)(uint32_t self, uint32_t edx, const char* text);
+        reinterpret_cast<Run_t>(U32(U32(game) + 0xa8))(game, 0, text.c_str());
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Posizione dell'oggetto di un handle (+0x24, +0x28), se c'e'.
+bool ObjectPos(uint16_t h, int& x, int& y)
+{
+    __try {
+        const uint32_t obj = U32(kHandleTable + h * 4u);
+        if (!obj) return false;
+        x = static_cast<int>(U32(obj + 0x24));
+        y = static_cast<int>(U32(obj + 0x28));
+        return x >= 0 && y >= 0 && x < 4000000 && y < 4000000;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Trucchi classici di Imperivm (0.10.1), quelli della console del gioco, eseguiti come script: "@bonus" = AddBonus(200,
+// 200, 60, 60, 20000) alle unita' selezionate (Unit::AddBonus, 0x5e0ce0; i valori sono quelli del trucco conosciuto,
+// "quasi imbattibili"). Numeri: 1 attacco, 2 difesa (dalle avventure del gioco, 0.10.2); il binding mette il primo a +8
+// della voce del bonus, il secondo a +0x14, il terzo a +0x18 e il quarto due volte (+0xc, +0x10: sembra la vita, nella
+// mappa di LukkyFrost l'eroe invincibile ha 39990), il quinto non si vede usato. raggiunte come fa Resurrected con un cerchio di 6
+// intorno alla posizione di ognuna; "@fog" = ToggleFog (nebbia di guerra accesa o spenta, funzione della console
+// registrata da 0x6aa500). La velocita' 10x passa invece da GameTick (TickSpeedStep(10)).
+int LocalCheat(const char* verb, int value, const std::vector<uint16_t>& handles)
+{
+    if (strcmp(verb, "@fog") == 0) {
+        const bool ok = RunScript("ToggleFog();");
+        Log("Trucco classico: ToggleFog %s", ok ? "eseguito" : "NON eseguito (partita in rete o errore)");
+        return ok ? 1 : 0;
+    }
+    const bool atk = strcmp(verb, "@atk") == 0, def = strcmp(verb, "@def") == 0;
+    if (strcmp(verb, "@bonus") == 0 || atk || def) {
+        // 0.10.2: "@atk" / "@def" = solo attacco / solo difesa (primo / secondo numero, valore da 1 a 1000)
+        const int v = (std::max)(1, (std::min)(1000, value));
+        const std::string args = atk ? std::to_string(v) + ", 0, 0, 0, 0" : def ? "0, " + std::to_string(v) + ", 0, 0, 0" : "200, 200, 60, 60, 20000";
+        std::string body;
+        int done = 0, sent = 0;
+        auto flush = [&]() {
+            if (body.empty()) return;
+            if (RunScript("ObjList ol; int k; " + body)) ++sent;
+            body.clear();
+        };
+        for (uint16_t h : handles) {
+            int x = 0, y = 0;
+            if (!ObjectPos(h, x, y)) continue;
+            body += "ol = ObjsInCircle(Point(" + std::to_string(x) + ", " + std::to_string(y) + "), 6, \"Unit\").GetObjList(); "
+                    "for (k = 0; k < ol.count; k += 1) { if (ol[k].IsValid()) { ol[k].AsUnit().AddBonus(" + args + "); } } ";
+            ++done;
+            if (body.size() > 1400) flush();
+        }
+        flush();
+        Log("Trucco classico: AddBonus(%s) a %d unita' selezionate (%d script)", args.c_str(), done, sent);
+        return sent;
+    }
+    return 0;
+}
+
+} // namespace
+
+int GameCheat(const char* verb, int value)
+{
+    if (!g_knownExe || !g_cfg.memory || !verb || !verb[0]) return 0;
+    if (verb[0] == '@') {
+        std::vector<uint16_t> sel;
+        int sx = -1, sy = -1;
+        ReadSelection(sel, sx, sy);
+        return LocalCheat(verb, value, sel);
+    }
+    static const char kAlpha[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-";
+    std::vector<uint16_t> handles;
+    int x = -1, y = -1;
+    ReadSelection(handles, x, y);
+    const std::string v = value > 0 ? std::to_string(value) : std::string();
+    int queued = 0;
+    if (verb[0] == 's' && verb[1] && !verb[2]) {
+        // sulle unita' selezionate, a gruppi di 15 handle
+        for (size_t i = 0; i < handles.size(); i += 15) {
+            std::string text = std::string("#CHEAT:") + verb + ":" + v + ":";
+            for (size_t j = i; j < handles.size() && j < i + 15; ++j) {
+                const unsigned h = handles[j];
+                text += kAlpha[(h >> 12) & 63];
+                text += kAlpha[(h >> 6) & 63];
+                text += kAlpha[h & 63];
+            }
+            g_cheatQueue.push_back(text);
+            ++queued;
+        }
+    }
+    else {
+        std::string text = std::string("#CHEAT:") + verb + ":" + v;
+        if (x >= 0) text += ":" + std::to_string(x) + "," + std::to_string(y);
+        g_cheatQueue.push_back(text);
+        ++queued;
+    }
+    Log("Trucco \"%s\" valore %d: %d comandi in coda (%u oggetti selezionati, riferimento %d,%d)", verb, value, queued,
+        static_cast<unsigned>(handles.size()), x, y);
+    return queued;
+}
+
+// "Crea truppe" (0.10.0): "#CHEAT:spawn:<classe>,<numero>:x,y"; Resurrected controlla che la classe esista e le fa uscire
+// dall'edificio proprio piu' vicino al punto (quello selezionato), fino a 100 per volta.
+int GameCheatSpawn(const char* cls, int count)
+{
+    if (!g_knownExe || !g_cfg.memory || !cls || !cls[0]) return 0;
+    for (const char* c = cls; *c; ++c)
+        if (!((*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || *c == '_' || *c == '-')) return 0;
+    std::vector<uint16_t> handles;
+    int x = -1, y = -1;
+    ReadSelection(handles, x, y);
+    if (x < 0) return 0;
+    if (count < 1) count = 1;
+    if (count > 100) count = 100;
+    const std::string text = std::string("#CHEAT:spawn:") + cls + "," + std::to_string(count) + ":" + std::to_string(x) + "," + std::to_string(y);
+    if (text.size() > 64) return 0;
+    g_cheatQueue.push_back(text);
+    Log("Trucco \"crea truppe\": %s x%d dall'edificio a %d,%d", cls, count, x, y);
+    return 1;
+}
+
+// Prossimo insediamento (0.10.0): nella tabella degli handle si cercano gli oggetti del giocatore locale (proprietario
+// a +0x70 [R: civai.cpp]) la cui classe (+0x3c) e' un "BaseTownhall" (metodo IsKindOf per nome 0x59c020 [R]); la camera
+// va sul successivo con CenterOn 0x627300 (thiscall sul gestore della vista [0x9edd18], punto in coordinate della vista:
+// x come nel mondo, y * 0xb5 / 256, senza l'altezza del terreno) [R: SetCamera in spectator.cpp, ProjectedRect].
+namespace {
+using IsKindName_t = int(__fastcall*)(uint32_t cls, uint32_t edx, const char* name);
+using CenterOn_t = void(__fastcall*)(uint32_t view, uint32_t edx, int* pos, int x);
+uint16_t g_lastTownhall = 0;
+
+bool TownhallAt(uint32_t index, uint32_t player, int& x, int& y)
+{
+    __try {
+        const uint32_t obj = U32(kHandleTable + index * 4u);
+        if (!obj || U32(obj + 0x70) != player) return false;
+        const uint32_t cls = U32(obj + 0x3c);
+        if (!cls || !reinterpret_cast<IsKindName_t>(0x59c020)(cls, 0, "BaseTownhall")) return false;
+        x = static_cast<int>(U32(obj + 0x24));
+        y = static_cast<int>(U32(obj + 0x28));
+        return x >= 0 && y >= 0 && x < 4000000 && y < 4000000;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+uint32_t LocalPlayer()
+{
+    __try {
+        const uint32_t game = U32(kGame);
+        return game ? U32(game + 0x12c8) : 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+bool CenterCamera(int x, int y)
+{
+    int pos[2] = { x, static_cast<int>((static_cast<long long>(y) * 0xb5) >> 8) };
+    __try {
+        const uint32_t view = U32(0x9edd18);
+        if (!view) return false;
+        reinterpret_cast<CenterOn_t>(0x627300)(view, 0, pos, 0);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+} // namespace
+
+int GameNextSettlement(int& index, int& total)
+{
+    index = total = 0;
+    if (!g_knownExe || !g_cfg.memory) return 0;
+    const uint32_t player = LocalPlayer();
+    if (!player) return 0;
+    struct Town { uint16_t h; int x, y; };
+    std::vector<Town> towns;
+    for (uint32_t i = 1; i < 65536; ++i) {
+        int x, y;
+        if (TownhallAt(i, player, x, y)) towns.push_back({ static_cast<uint16_t>(i), x, y });
+    }
+    total = static_cast<int>(towns.size());
+    if (towns.empty()) { Log("Prossimo insediamento: nessun municipio del giocatore trovato"); return 0; }
+    size_t pick = 0;
+    for (size_t k = 0; k < towns.size(); ++k) if (towns[k].h > g_lastTownhall) { pick = k; break; }
+    if (towns[pick].h <= g_lastTownhall) pick = 0;
+    g_lastTownhall = towns[pick].h;
+    index = static_cast<int>(pick) + 1;
+    if (!CenterCamera(towns[pick].x, towns[pick].y)) {
+        Log("Prossimo insediamento: ERRORE nello spostamento della camera");
+        return 0;
+    }
+    Log("Prossimo insediamento: %d di %d (handle %u, %d,%d)", index, total, towns[pick].h, towns[pick].x, towns[pick].y);
+    return 1;
+}
+
+void GameCheatTick()
+{
+    if (g_cheatQueue.empty()) return;
+    const DWORD now = GetTickCount();
+    if (now - g_cheatLast < 130) return;
+    g_cheatLast = now;
+    const std::string text = g_cheatQueue.front();
+    g_cheatQueue.erase(g_cheatQueue.begin());
+    const bool ok = SendCheat(text);
+    Log("Trucco: comando \"%s\" %s", text.c_str(), ok ? "messo nella coda della partita" : "NON mandato");
+    if (!ok) g_cheatQueue.clear();
+}
+
 // --- Lettere della tastiera di Imperivm Resurrected sulla barra (0.5.2) ------------------------------------------
 // Resurrected (winmm.dll 1.0.3, SHA-256 1624740a...) tiene l'opzione "lettere sulla barra" in un byte a +0x43e87c
 // (g_barLetters di src/game/controls.cpp): lo legge il calcolo delle lettere (+0x53907, cmp byte [g], 0), lo carica
@@ -306,13 +606,74 @@ uint8_t* FindLetters()
     __try { ok = size > rva && size > 0x5bad7 && CodeCmpByte(base, 0x53907, target) && CodeCmpByte(base, 0x5bad0, target); }
     __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
     if (!ok) {
-        Log("Lettere di Resurrected: versione di winmm.dll diversa dalla 1.0.3 (%s), le lettere restano", path);
+        // 0.10.0: un'altra versione di Resurrected. L'opzione si carica dall'ini con il nome "LettersOnBar": nel codice c'e'
+        // "push <indirizzo del nome>", la lettura, e poco dopo "setne byte ptr [opzione]" (0F 95 05 indirizzo), come nella
+        // 1.0.3 a +0x5a6c5 / +0x5a6dd. Si cerca quello schema: se c'e' una volta sola e l'indirizzo sta dentro la DLL, e'
+        // l'opzione; altrimenti le lettere restano.
+        uint8_t* found = nullptr;
+        int hits = 0;
+        __try {
+            const char name[] = "LettersOnBar";
+            for (uint32_t i = 0x1000; i + sizeof(name) < size && !found; ++i) {
+                if (memcmp(base + i, name, sizeof(name)) != 0) continue;
+                const uint32_t va = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(base)) + i;
+                for (uint32_t c = 0x1000; c + 5 < size; ++c) {
+                    if (base[c] != 0x68 || *reinterpret_cast<const uint32_t*>(base + c + 1) != va) continue;
+                    for (uint32_t k = c + 5; k < c + 64 && k + 7 < size; ++k) {
+                        if (base[k] != 0x0f || base[k + 1] != 0x95 || base[k + 2] != 0x05) continue;
+                        const uint32_t addr = *reinterpret_cast<const uint32_t*>(base + k + 3);
+                        const uint32_t lo = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(base));
+                        if (addr > lo && addr < lo + size) {
+                            uint8_t* cand = reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(addr));
+                            if (found != cand) ++hits;
+                            found = cand;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { found = nullptr; }
+        if (found && hits == 1) {
+            Log("Lettere di Resurrected: versione diversa dalla 1.0.3, opzione trovata dal codice che legge LettersOnBar "
+                "(winmm.dll+0x%x, valore %u)", static_cast<unsigned>(found - base), *found);
+            return found;
+        }
+        Log("Lettere di Resurrected: versione di winmm.dll diversa dalla 1.0.3 (%s) e opzione non riconosciuta (%d candidati), "
+            "le lettere restano", path, hits);
         return nullptr;
     }
     Log("Lettere di Resurrected: opzione trovata in winmm.dll+0x%x (valore %u)", rva, base[rva]);
     return const_cast<uint8_t*>(base) + rva;
 }
 } // namespace
+
+// 0.10.0: per i trucchi basta Resurrected di qualsiasi versione (la winmm.dll della cartella del gioco con il nome
+// "Imperivm Resurrected" nelle informazioni di versione): il formato "#CHEAT:" non dipende dalla versione, e se cambiasse
+// Resurrected scarterebbe il comando scrivendolo nel suo log.
+bool GameResurrectedLoaded()
+{
+    static int state = 0;
+    if (state) return state > 0;
+    HMODULE winmm = GetModuleHandleA("winmm.dll");
+    char path[MAX_PATH] = {};
+    if (!winmm || !GetModuleFileNameA(winmm, path, MAX_PATH) || _strnicmp(path, GameDir(), strlen(GameDir())) != 0) { state = -1; return false; }
+    bool named = false;
+    DWORD dummy = 0;
+    const DWORD sz = GetFileVersionInfoSizeA(path, &dummy);
+    if (sz) {
+        std::vector<char> data(sz);
+        if (GetFileVersionInfoA(path, 0, sz, data.data())) {
+            // cerca il nome del prodotto in tutto il blocco delle informazioni di versione (UTF-16)
+            const wchar_t* want = L"Imperivm Resurrected";
+            const size_t wl = wcslen(want) * 2;
+            for (size_t i = 0; i + wl <= data.size() && !named; ++i) named = memcmp(data.data() + i, want, wl) == 0;
+        }
+    }
+    state = named ? 1 : -1;
+    Log("Resurrected per i trucchi: %s", named ? "si' (winmm.dll di Imperivm Resurrected)" : "no");
+    return named;
+}
 
 void GameResurrectedLetters(bool hide)
 {
@@ -410,6 +771,34 @@ bool GameCommandTitle(int id, char* out, int cap)
     return n > 0;
 }
 
+// Nome interno (+0x08) e parametro (+0x40) del descrittore di un comando [R: kDescName, kDescParam in cmdcheck.cpp di
+// Resurrected]; per i comandi di addestramento ("train...") il parametro e' la classe dell'unita' (0.10.0).
+bool GameCommandParam(int id, char* out, int cap)
+{
+    if (cap > 0) out[0] = 0;
+    if (!g_knownExe || !g_cfg.memory || cap < 2) return false;
+    __try {
+        const uint32_t desc = Descriptor(id);
+        return desc && ReadGameString(desc + 0x40, out, cap) > 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool GameCommandName(int id, char* out, int cap)
+{
+    if (cap > 0) out[0] = 0;
+    if (!g_knownExe || !g_cfg.memory || cap < 2) return false;
+    __try {
+        const uint32_t desc = Descriptor(id);
+        return desc && ReadGameString(desc + 0x08, out, cap) > 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 // Gruppi del giocatore locale: oggetti di selezione a [partita+0x12c8] + 0xac + n * 0x2c, n = cifra del tasto (0x5e8450,
 // chiamata da 0x5e8ec0 con tasto - '0'); numero di elementi a +0x1c come nella selezione a +0xf0 [R].
 bool GameGroupCounts(int counts[10])
@@ -429,6 +818,57 @@ bool GameGroupCounts(int counts[10])
     __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+}
+
+// Contenuto dei gruppi e della selezione (0.10.1, radiale dei gruppi): per ogni oggetto della lista (come in
+// GameSelectedHero) si contano gli eroi (classe CVXHero) e si somma la salute (+0xc0) e la salute massima (+0xc8).
+namespace {
+
+void ReadGroup(uint32_t list, GroupInfo& g)
+{
+    g = GroupInfo{};
+    __try {
+        const uint32_t n = U32(list + 0x1c), head = U32(list + 0x18);
+        if (!head || !n || n > 2000) return;
+        g.count = static_cast<int>(n);
+        long long hp = 0, max = 0;
+        uint32_t node = U32(head);
+        for (uint32_t guard = 0; node && node != head && guard < n + 8; ++guard) {
+            const uint16_t h = *reinterpret_cast<const uint16_t*>(node + 8);
+            const uint32_t obj = U32(0xa2a610 + h * 4u);
+            if (obj) {
+                if (IsKind(obj, 0x821294)) ++g.heroes;
+                const int a = static_cast<int>(U32(obj + 0xc0)), b = static_cast<int>(U32(obj + 0xc8));
+                if (b > 0 && b < 1000000 && a >= 0 && a <= b) { hp += a; max += b; }
+            }
+            node = U32(node);
+        }
+        g.hp = max > 0 ? static_cast<int>(hp * 100 / max) : -1;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        g = GroupInfo{};
+    }
+}
+
+} // namespace
+
+bool GameGroupInfo(GroupInfo groups[11])
+{
+    for (int i = 0; i < 11; ++i) groups[i] = GroupInfo{};
+    if (!g_knownExe || !g_cfg.memory) return false;
+    uint32_t player = 0, sel = 0;
+    __try {
+        const uint32_t game = U32(kGame);
+        player = game ? U32(game + 0x12c8) : 0;
+        sel = U32(kSelManager);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    if (!player) return false;
+    for (int i = 0; i < 10; ++i) ReadGroup(player + 0xac + i * 0x2c, groups[i]);
+    if (sel) ReadGroup(sel + 0xf0, groups[10]);
+    return true;
 }
 
 // Camera: lo stesso passo del timer di scorrimento del gioco (0x5b8100, evento 0x19a87453), con lo spostamento deciso
